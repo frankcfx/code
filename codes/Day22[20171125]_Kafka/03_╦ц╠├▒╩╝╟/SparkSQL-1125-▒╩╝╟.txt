@@ -1,0 +1,197 @@
+SparkSQL
+===================================================
+SparkSQL read jdbc 三种API讲解
+  前提：每个分区均使用一个JDBC的连接来进行数据的读取
+-1. def jdbc(url: String, table: String, properties: Properties): DataFrame
+  使用一个分区来读取对应table表的所有数据(也就是说最终形成的RDD只会有一个Task)
+-2. def jdbc(
+      url: String,  jdbc连接url
+      table: String, 表名称
+      columnName: String,  分区的字段名称
+      lowerBound: Long, 分区计算的下界值
+      upperBound: Long, 分区计算的上界值
+      numPartitions: Int, 分区数
+      connectionProperties: Properties): DataFrame
+    最终形成的DataFrame/RDD的分区数目和numPartitions指定的数值一致，但是该API的调用有一个前提，就是要求分区的字段必须是数值型的
+	各个分区的字段范围计算规则如下：
+	  step = ((upperBound - lowerBound) / numPartitions).toLong
+	  currentIndex = step + lowerBound ==> 得到第一个分区: (负无穷大，currentIndex)
+	  preIndex = currentIndex
+	  currentIndex += step  ==> 得到第二个分区: [preIndex, currentIndex)
+	  preIndex = currentIndex
+	  .......
+	  直到得到numPartitions-1个分区后
+	  最后一个分区的范围是: [currentIndex, 正无穷大)
+-3. def jdbc(
+      url: String,  jdbc连接url
+      table: String, 表名称
+      predicates: Array[String], // 给定具体分区的where条件数组，也就是每个分区获取数据的where条件
+      connectionProperties: Properties): DataFrame
+  最终形成的DataFrame的分区数量和predicates数组中的条件数量是一致的；而且最终每个分区中的数据一定是满足predicates中定义的where条件的
+===================================================
+SparkSQL案例二：Hive&MySQL表数据join
+  -1. pom.xml中添加依赖
+<dependency>
+	<groupId>org.apache.spark</groupId>
+	<artifactId>spark-hive_2.10</artifactId>
+	<version>${spark.version}</version>
+	<scope>compile</scope>
+</dependency>
+<dependency>
+	<groupId>mysql</groupId>
+	<artifactId>mysql-connector-java</artifactId>
+	<version>5.1.27</version>
+</dependency>
+  -2. IDEA中代码运行
+    --a. 因为代码中访问了hive的表数据，所以需要集成Hive
+	  ---1. 将hive-site.xml添加到项目的classpath中，即resources文件夹中
+	  ---2. 根据hive.metastore.uris参数值决定是启动hive的metastore服务(有配置值的时候)还是添加驱动的jar文件(默认情况或者参数值为空的情况下)
+    --b. 右击object选择运行即可
+	
+IDEA中运行SparkSQL程序可能遇到的异常：
+  前提：SparkCore程序是可以正常运行的
+  -1. Exception in thread "main" java.lang.OutOfMemoryError: PermGen space ==> <OutOfMemoryError thrown from the xxxx in xxx>
+    原因：由于使用了HiveContext，也就是需要加载hive的依赖包，但是hive的依赖包是比较庞大的，默认的jvm内存大小不够，所以需要更改启动参数
+	解决方案：run -> edit configrations， 然后找到运行的object，然后在VM options中给定JVM参数即可，参数: -XX:PermSize=128M -XX:MaxPermSize=128M
+  -2. 可能出现NullPointException异常，(前提：代码是正常的)原因是windows和linux系统的底层源码不同导致的问题，主要出现在程序调用系统底层的API的时候出现异常，解决方案：修改源码 ==> call me
+  -3. 如果你的当前操作系统的用户名称是中文或者名称中有空格，并且运行程序是失败的，异常类似"xxx path是一个异常的路径"，可以尝试一下操作：
+    --1. 必须给定HADOOP_USER_NAME环境变量，而且在代码中是生效的
+	--2. 必须添加hadoop的配置项，hadoop.tmp.dir必须给定一个值，不能使用默认值
+  -4. (IDEA中运行可能会遇到)如果配置了HADOOP_USER_NAME，并且没有问题3的情况下，可以考虑把HADOOP_USER_NAME环境变量删除
+  -5. 产生原因是：删除windows上的临时文件，没有权限导致的问题，这个异常不用管
+2017-11-25 10:09:25,034 (Thread-3) [ERROR - org.apache.spark.Logging$class.logError(Logging.scala:95)] Exception while deleting Spark temp dir: C:\Users\ibf\AppData\Local\Temp\spark-0bb358bb-4b95-4a4d-a011-61fa20f2c280
+java.io.IOException: Failed to delete: C:\Users\ibf\AppData\Local\Temp\spark-0bb358bb-4b95-4a4d-a011-61fa20f2c280  
+sparksql集成hive的应用程序集群运行
+  运行模式：Spark on yarn driver cluster mode
+  -1. 首先配置spark和yarn运行环境的集成(参考之前sparkcore部分的内容)
+  -2. 将spark根目录下lib文件夹中的所有以datanucleus-开头的jar文件添加到classpath中，即将文件放到${HADOOP_HOME}/share/hadoop/common/lib或者${HADOOP_HOME}/share/hadoop/yarn/lib
+  -3. 将mysql的驱动也添加到classpath中
+  -4. 提交运行
+bin/spark-submit \
+--class com.ibeifeng.bigdata.spark.app.sql.HiveJoinMySQLDataSparkSQL \
+--master yarn \
+--deploy-mode cluster \
+/home/beifeng/o2o17/logs-analyzer.jar
+
+======================================================
+RDD to DataFrame
+  根据一个已经存在的RDD构建一个对应的DataFrame
+  http://spark.apache.org/docs/1.6.1/sql-programming-guide.html#interoperating-with-rdds
+  方式一：Inferring the Schema Using Reflection
+    利用反射机制来自动的推断数据类型
+	要求：
+	  -1. RDD中的数据类型必须是case class类型
+	  -2. 必须引入SQLContext中的隐式转换
+	    import sqlContext.implicits._
+  方式二：Programmatically Specifying the Schema
+    明确给定DataFrame中的schema信息，然后调用相关的API进行构建
+	要求：
+	  -1. 创建一个RDD[Row]类型的对象
+	  -2. 创建一个对应的schema对象
+	  -3. 调用SQLCotnext的API进行DataFrame的创建
+
+==============================================
+SparkSQL内置函数
+  org.apache.spark.sql.functions ==> 可以认为这个里面的所有API是sparksql内置的所有函数(实质上这个object中的API主要是应用于DSL编程过程中的) ==> 基本上所有的hive内置的函数sparksql均支持
+  注意：
+    普通的函数的使用可以使用SQLContext作为程序的入口
+	对于hive特殊函数(eg: 窗口分析函数)必须使用HiveContext作为程序入口
+  ROW_NUMBER函数 ===> 首先对全局数据做一个分组，然后对每组数据作一个排序，最后对每组排序好的数据给定一个序号, 序号从1开始 ===> 常用于分组排序TopN的案例中
+需求：对emp表进行处理，要求获取每个部门sal值最大的前三个员工的信息
+select deptno,empno,ename,sal,row_number() over (partition by deptno order by sal desc) as rnk from common.emp 
++------+-----+------+------+---+
+|deptno|empno| ename|   sal|rnk|
++------+-----+------+------+---+
+|    10| 7839|  KING|5000.0|  1|
+|    10| 7782| CLARK|2450.0|  2|
+|    10| 7934|MILLER|1300.0|  3|
+|    20| 7788| SCOTT|3000.0|  1|
+|    20| 7902|  FORD|3000.0|  2|
+|    20| 7566| JONES|2975.0|  3|
+|    20| 7876| ADAMS|1100.0|  4|
+|    20| 7369| SMITH| 800.0|  5|
+|    30| 7698| BLAKE|2850.0|  1|
+|    30| 7499| ALLEN|1600.0|  2|
+|    30| 7844|TURNER|1500.0|  3|
+|    30| 7521|  WARD|1250.0|  4|
+|    30| 7654|MARTIN|1250.0|  5|
+|    30| 7900| JAMES| 950.0|  6|
++------+-----+------+------+---+
+select deptno,empno,ename,sal from (select deptno,empno,ename,sal,row_number() over (partition by deptno order by sal desc) as rnk from common.emp) tmp where tmp.rnk <= 3
++------+-----+------+------+
+|deptno|empno| ename|   sal|
++------+-----+------+------+
+|    10| 7839|  KING|5000.0|
+|    10| 7782| CLARK|2450.0|
+|    10| 7934|MILLER|1300.0|
+|    20| 7788| SCOTT|3000.0|
+|    20| 7902|  FORD|3000.0|
+|    20| 7566| JONES|2975.0|
+|    30| 7698| BLAKE|2850.0|
+|    30| 7499| ALLEN|1600.0|
+|    30| 7844|TURNER|1500.0|
++------+-----+------+------+
+
+==========================================================
+SparkSQL的自定义函数
+  注意：SparkSQL可以直接使用在hive中定义的永久的自定义函数(udf/udaf/udtf, create function xxx as 'xx' using jar 'yyy'); 使用这类函数的前提必须使用HiveContext作为程序的入口
+  在SparkSQL中定义自定义函数只支持UDF和UDAF两种
+    UDF ==> 一条数据输入，一条数据输出 ==> 普通的函数
+	UDAF ==> 一组数据输入，一条数据输出 ==> 应用于group by之后的数据处理 ==> 聚合函数
+
+===============================================
+SparkSQL案例三：csv文件数据读取
+  -1. pom.xml中添加依赖
+<!-- databricks -->
+<dependency>
+	<groupId>com.databricks</groupId>
+	<artifactId>spark-csv_2.10</artifactId>
+	<version>1.5.0</version>
+</dependency>
+  -2. 右击运行
+    
+
+====================================================
+Dataset
+  创建方式：
+    http://spark.apache.org/docs/1.6.1/sql-programming-guide.html#creating-datasets
+  Dataset、DataFrame、RDD的区别和联系：
+    相同点：
+	  都是分布式数据集
+	  数据都是分区存在的
+	  数据都是不可变的(每次调用API形成的新的对象中包含的数据变化之后的数据，原来对象中的数据是不会发生变化的)
+	不同点：
+	  RDD中的数据是没有数据类型的
+	  DataFrame中的数据是弱数据类型的，在运行之前不会进行类型检查的
+	  Dataset中的数据是强数据类型的，在编译的时候就会检查数据类型
+	  Dataset中的序列化机制是采用Encode编码器的形式，DataFrame和RDD内部默认使用java的序列化机制(或者可选kryo序列化机制)
+
+===========================================================
+SparkSQL的优化
+  优化指的就是调整task与资源之间的关系，包括：cpu数量、内存的大小、executor的数量、内存的模型、gc机制.....
+  -1. SparkCore中应用到优化策略在SparkSQL中基本上均可以使用
+  -2. SparkSQL本身的转门的优化策略
+    --a. hql语句的优化
+	--b. 参数优化
+	  http://spark.apache.org/docs/1.6.1/sql-programming-guide.html#performance-tuning
+	  spark.sql.autoBroadcastJoinThreshold：10485760，给定当表的大小(磁盘大小)小于该值的情况下，将join自动转换为map join，默认是10M；如果资源比较足够的情况下，一般将该值设置为1~2G
+	  spark.sql.shuffle.partitions: 200, 给定DataFrame执行过程中，shuffle之后形成的RDD/DataFrame的分区数量
+	  
+========================================================
+SparkSQL总结
+  SparkSQL和Hive的集成
+  Spark应用第三方jar文件添加解决方案
+  SparkSQL的ThriftServer服务
+  What is DataFrame?
+  DataFrame、RDD之间的关系、区别以及转换方式
+  SparkSQL的read和write编程模型
+  DataFrame、Dataset、RDD的区别
+  SparkSQL的DSL语法
+  案例：
+    不同数据源数据的join方式???
+	分组排序TopN案例SparkSQL代码实现???
+  额外回顾：
+    -1. Hive的相关HQL语法，包括但不限于：分页、分组、排序、窗口函数、子查询...
+	-2. Hive的相关HQL的优化方式，包括但不限于：map join、filter+reduce join、.....
+	-3. SparkSQL是否可以替换Sqoop的工作???如果能够替换，怎么做???
+  

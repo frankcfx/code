@@ -1,0 +1,47 @@
+Kafka
+====================================================
+Kafka Consumer API
+  文档：
+    http://kafka.apache.org/082/documentation.html#highlevelconsumerapi
+	http://kafka.apache.org/082/documentation.html#simpleconsumerapi
+	http://kafka.apache.org/082/documentation.html#consumerconfigs
+	http://kafka.apache.org/082/documentation.html#theconsumer
+	http://kafka.apache.org/082/documentation.html#apidesign
+  Simple Consumer API(A)和High Level Consumer API(B)的区别：
+    -1. A需要直接连接kafka的底层数据API，需要考虑：leader的切换、offset设置等相关的问题；B通过封装好的高层次的API进行数据的读取操作，只需要给定如何进行数据处理即可
+	-2.A需要代码中明确给定获取那一个topic的那一个分区的数据，并且需要给定从哪个偏移量开始获取数据；B通过consumer configraution进行数据的读取
+    -3. A的consumer的offset偏移量需要代码管理(自己管理); B的consumer offset偏移量默认是提交zk的
+    -4. A直接连接kafka服务，所以需要给定kafka的连接地址，也就是: metadata.broker.list;B是通过zookeeper中kafka的元数据间接的连接kafka的服务，所以代码中给定的是zk的连接信息，也就是：zookeeper.connect
+
+====================================================
+Kafka & Flume
+  文档：
+    http://flume.apache.org/FlumeUserGuide.html#fan-out-flow
+	http://flume.apache.org/FlumeUserGuide.html#flume-channel-selectors
+	http://flume.apache.org/FlumeUserGuide.html#flume-sink-processors
+    http://flume.apache.org/FlumeUserGuide.html#kafka-source
+	http://flume.apache.org/FlumeUserGuide.html#kafka-sink
+  启动命令：
+    bin/flume-ng agent --conf ./conf/ --conf-file ./conf/test1.conf --name a1 -Dflume.root.logger=INFO,console
+	bin/flume-ng agent --conf ./conf/ --conf-file ./conf/test2.conf --name a2 -Dflume.root.logger=INFO,console
+
+====================================================
+Kafka监控
+java -cp /home/beifeng/o2o17/KafkaOffsetMonitor-assembly-0.2.1.jar \
+com.quantifind.kafka.offsetapp.OffsetGetterWeb \
+--zk hadoop-senior01.ibeifeng.com:2181/o2o17 \
+--port 8080 \
+--refresh 10.seconds \
+--retain 2.days
+
+=====================================================
+Kafka总结
+  -1. Kafka的概念
+  -2. Kafka的安装以及基本的命令
+  -3. (重要)Kafka内部的一些机制
+  -4. (重要)Kafka Producer&Consumer的相关参数以及参数的作用
+  -5. Kafka Producer&Consumer API的代码应用
+  -6. (重要)Kafka和Flume的集成
+  -7. Kafka的运维监控
+
+

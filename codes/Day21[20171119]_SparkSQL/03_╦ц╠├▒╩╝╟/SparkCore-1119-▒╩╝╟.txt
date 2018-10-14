@@ -1,0 +1,191 @@
+SparkCore
+=====================================
+Spark优化
+  -1. 代码优化
+    -a. 如果一个RDD只使用一次，那么最好使用链式编程
+	-b. 如果一个RDD被多次使用，那么进行cache缓存操作或者checkpoint操作<需要设置checkpoint文件夹>；当一个缓存的rdd不再被使用，那么进行清除缓存操作
+	-c. 优先选择使用reduceByKey和aggregateByKey API，而不是使用groupByKey
+	-d. 尽可能的少用shuffle类型的API，比如：优先使用coalesce而不是repartition API来进行分区数的减少操作
+	-e. 进行数据输出的时候(eg: 输出到数据库)，优先选择foreachPartition API而不是foreach API
+	-f. 尽可能的进行rdd api的合并，减少rdd的调用链
+  -2. 资源优化(之前说过)
+    -a. task并行度
+	  含义：指的就是能够同时运行的task的数量
+	  这个受几个因素的影响：应用分配的cpu的数量、rdd的分区数量
+	  更改分区数量的方式：
+	    --1. 初始的RDD(从原始数据源读取数据的RDD)
+		  这类RDD的分区数一般是由InputFormat的getSplits方法决定的，所以根据InputFormat的实现代码进行调整
+		  另外在spark中，可以通过api给定，比如: sc.textFile("", 10) 表示形成的RDD最少的分区数量为10个
+		--2. RDD转换得到的RDD
+		  ---1. 如果是普通的转换API(不会发生shuffle操作的API)，形成的RDD的分区数量和父RDD的分区数量一致
+		  ---2. 如果是会产生shuffle类型的API，最终形成的RDD的分区数的规则见<groupByKey、reduceByKey、aggregateByKey API执行流程比较/RDD WordCount执行图_groupByKey&reduceByKey API的理解.pdf>文档内容
+	-b. 备注：一个task的运行默认情况下需要一个executor的cpu core
+	  所以最大的task的并行度受应用总executor的cpu core的影响
+  -3. 数据倾斜优化
+    导致原因：数据重新分配过程中，数据分布不均匀导致的，导致有的分区数据多、有的分区数据少，最终就有可能导致有的task执行速度快、有的执行速度慢；更甚者可能产生OOM异常
+	定位方式：通过应用执行的DAG图以及web ui进行查看，然后集合代码进行定位
+	解决方案：
+	  -1. 更改分区的策略(增加分区数目、自定义数据分区器....)
+	  -2. 两阶段聚合
+	  -3. map join取代reduce join
+  -4. shuffle优化
+    根据业务的情况选择对应的shuffle manager并给定对应的优化参数
+
+==============================================
+RDD依赖
+  又称为lineage(生命线)，当task执行失败的时候，可以基于lineage生命线的依赖关系进行数据恢复操作，可以从最原始的RDD开始重新计算数据，如果在lineage中存在数据缓存，那么进行恢复的时候，直接从缓存中获取数据
+  
+  窄依赖
+    父rdd中的每个分区的数据到子rdd的时候，在同一个分区中
+	常见的API：map、filter、mapPartitions、flatMap、union、join(要求两个父RDD存在数据分区器，并且分区器一模一样<类以及分区数一样>，并且最终形成的子RDD的分区器和父RDD的分区器一模一样)
+	备注：
+	  形成的子RDD的分区数量就等于父RDD的分区数量或者等于父RDD的分区数量的和
+	  窄依赖的计算是一个流式管道的计算，是基于内存的，每个API的执行结果在窄依赖的执行过程中不会输出到磁盘(执行时一个API接API执行的), 只有当窄依赖阶段执行完成后，才会将结果输出磁盘、返回driver或者输出到外部的存储系统中
+  宽依赖
+    父rdd中的每个分区的数据到子rdd的时候，有可能出现在不同分区中
+	常见API：xxxByKey、xxxBy、join、repartition等
+
+========================================================
+Spark应用组成结构
+  Driver + Executors
+    Driver负责资源申请、Job调度
+	Executor负责具体的Task任务的执行， Task以线程的形式运行在Executor中，一个Executor可以同时运行多个Task任务(数量等于executor的cpu cores) ==> Executor接收到Driver发送过来的Task信息后进行执行操作
+  执行一次spark-submit脚本就是一个spark应用的产生
+    一个Spark应用包含多个job(>=0) ==> 每调用一次RDD的action类型的API就产生一个Job
+	  一个Job包含多个Stage(>0)
+	    一个Stage包含多个Task
+		  Task是最小的执行单位，是运行在Executor中的线程
+
+Stage划分规则：
+  Stage的划分只有是当Job被触发执行的时候才会进行
+  Stage的划分基于RDD的DAG图，使用SparkContext对象中的DAGScheduler进行划分操作，规则如下：
+    -1. 基于RDD的DAG图，从后往前进行递推，如果遇到一个宽依赖，就形成一个Stage；直到第一个RDD
+	-2. 最后一个Stage叫做ResultStage，其它Stage叫做ShuffleMapStage
+
+Task
+  Task是处理数据的一个线程，执行在Executor中
+  task执行的代码逻辑就对应stage部分的rdd api的代码，一个分区数据的代码处理其实就叫做task
+  在DAG图划分为Stage后，每个Stage其实就是一组task，一组task的数量和RDD的分区数量一致的，一个分区就是一个Task
+  ResultStage中的Task叫做ResultTask，ResultTask的执行结果是返回给driver的
+  ShuffleMapStage中的Task叫做ShuffleMapTask，ShuffleMapTask的执行结果是进行shuffle操作输出到本地的磁盘文件或者内存中
+
+==========================================================
+Spark shuffle机制
+  shuffle是啥??? shuffle是将数据进行重新分布的一个机制
+  shuffle只存在于宽依赖中，也就是说只要有宽依赖就一定有shuffle操作 ==> 宽依赖API数据是从shuffle文件中获取的
+  两个stage之间一定存在shuffle操作 ==> shuffle导致stage的形成
+  spark内部的API执行的时候是基于内存的，但是shuffle操作需要在executor之间进行数据的传输，所以shuffle操作会有一定的内存、磁盘、网络等资源的开销
+  Spark内部使用shuffle manager进行shuffle机制的管理，参数：spark.shuffle.manager，默认为sort
+  Spark Shuffle优化：
+    http://spark.apache.org/docs/1.6.1/configuration.html#shuffle-behavior
+	-1. spark.shuffle.manager：sort，给定shuffle manager对象，可选sort和hash，sort表示进行排序操作，hash表示不进行排序操作; 当不需要排序的时候，可以选择使用该方式
+	-2. spark.shuffle.comsolidateFiles: false
+	  当使用hash shuffle manager的时候，如果设置为true表示开启文件的聚合功能，可以降低文件数量，当task数量比较多的时候，优化比较有效
+	-3. spark.shuffle.sort.bypassMergeThreshold：200
+	  当使用sort shuffle manager的时候，如果分区数量小于该给定值的情况下，那么shuffle采用by pass的模式，shuffle过程中就不会存在sort排序(前提：shuffle过程中不存在combiner操作，否则该参数无效)
+
+===================================================
+Spark Scheduler
+  http://spark.apache.org/docs/1.6.1/job-scheduling.html
+  http://spark.apache.org/docs/1.6.1/configuration.html#scheduling
+  Job调度：
+    在一个Spark应用中，多个Job之间如何运行??
+	FIFO: 按照Job的提交时间来执行，只有当一个Job执行完成后，下一个Job才能给执行
+	FAIR: 按照资源的情况来进行Job的执行
+  Task的调度：
+    Task的调度其实就是Stage的调度
+	Stage调度是基于Stage之间的依赖关系进行调度运行的，先运行shuffle之前的stage，当shuffle之前的stage运行完成后，才能给运行shuffle之后的stage
+	Task的调度和Shuffle调度一样，但是当资源不够的情况下(execuor cpu cores < task numbers)，优先考虑提交数据本地化的task任务，只有当等待时间到达的时候，才会提交其它task任务
+  相关参数：
+    spark.locality.wait：数据本地化的时候最大等待时间，默认为5s
+	spark.scheduler.mode：FIFO，调度模式，默认为FIFO
+	spark.speculation: false, 是否开启推测执行，false表示不开启
+	spark.task.cpus：给定一个task运行需要多少个cpu cores，默认为1
+	spark.task.maxFailures: 4，给定一个task最多允许失败的次数，默认为4次
+	
+====================================================
+Spark应用的构建或者执行流程
+  -1. 通过spark-submit脚本启动应用
+  -2. 应用启动的时候，分别启动driver和executor进程
+  -3. 在driver中会构建一个SparkContext对象(包含: TaskScheduler、DAGScheduler、SchedulerBackend等对象)  
+  -4. Driver进程中调用RDD的相关API进行RDD的执行DAG图的构建
+  -5. RDD action算子触发job的执行，就会导致DAG图对应Job最终提交到executor中执行
+  -6. DAGScheduler会将DAG图进行Stage的划分，形成一个一个Stage，并最终将Stage转换形成Task列表，并将Task列表添加到待运行的队列中
+  -7. TaskScheduler负责将Stage封装的Task进行序列化后提交到Executor中执行
+  -8. Executor接收到Task数据后，进行反序列化操作，并提交到线程池中进行执行，当task执行完成后，将task的执行结果输出到shuffle磁盘、输出到外部存储系统或者返回给Driver，并通知TaskScheduler当前Task执行完成
+  -9. TaskScheduler通过SchedulerBackend和Executor保持通信，并完成Task的监控；当一个Stage的所有task执行完成后，开始下一个stage的task的执行；直到所有的task全部执行完成，结果返回
+
+Driver和Executor启动
+  -1. Driver/ApplicationMaster的资源申请
+    client deploy mode
+	  spark on yarn
+	    driver就是运行spark-submit脚本的机器(client)，所以driver不需要申请资源
+		在driver运行好后，driver负责向ResourceManager申请AM运行的资源，并启动AM
+	  spark on standalone/mesos
+	    driver就是运行spark-submit脚本的机器(client)，所以driver不需要申请资源
+	  spark on local
+	    driver就是运行spark-submit脚本的机器(client)，所以driver不需要申请资源
+	cluster deploy mode
+	  spark on yarn
+	    运行spark-submit脚本的机器(client)向RM申请Driver/AM运行的资源，并启动Driver/AM进程
+	  spark on standalone/mesos
+	    运行spark-submit脚本的机器(client)向Master申请Driver运行的资源，并启动Driver进程
+	  spark on local
+	    不支持local模式
+  -2. Driver/ApplicationMaster向ResourceManager/Master申请Executor的资源
+    client deploy mode
+	  spark on yarn
+	    AM负责向RM申请Executor运行的资源
+	  spark on standalone/mesos
+	    Driver负责向Master申请Executor的资源
+	  spark on local
+	    Exeuctor和Driver其实就是一个jvm中的不同线程而已，所以不需要申请资源
+	cluster deploy mode
+	  spark on yarn
+	    Driver/AM负责向RM申请Executor运行的资源
+	  spark on standalone/mesos
+	    Driver负责向Master申请Executor的资源
+	  spark on local
+	    不支持local模式
+  -3. Driver/ApplicationMaster启动Executor进程
+  -4. rdd的构建和执行
+
+===============================================================
+Shared Variables
+  共享变量：Executor中的Task运行过程中使用Driver中定义变量，或者将Executor中定义的变量返回给Driver中使用; 分为广播变量和累加器
+  
+  Broadcast Variables
+    http://spark.apache.org/docs/1.6.1/programming-guide.html#broadcast-variables
+	功能：减低driver到executor的数据传输量，将原来传递给每个task的数据更改为传递给每个executor，这种情况下一个executor中的所有task共享一个变量
+	注意：
+	  -1. 广播变量在executor中不允许修改，是一个只读变量
+	  -2. 广播变量存在于executor的stoarge内存区域
+	  -3. 当task执行过程中，如果发现广播变量不存在，会重新获取
+	  -4. 广播变量不能广播RDD
+	  -5. 和缓存一样，当一个广播变量不用的时候，记住进行清除广播变量的操作
+	  -6. 广播变量常用于取代reduce join的map join中
+
+========================================================
+SparkCore总结
+  spark的编译
+  spark的四种运行方式
+  Driver的两种运行方式
+  Spark应用监控方式
+  Spark和MapReduce的比较
+  Spark应用的组成结构
+  What is RDD？
+  RDD的创建、运行、结构输出的方式以及原理
+  RDD的依赖
+  Stage的划分
+  Spark的shuffle机制
+  Spark的Scheduler机制
+  Spark应用的执行流程
+  Spark的内存模式
+  Spark的动态资源调度模型
+  Spark优化
+  代码案例：
+    -1. WordCount
+	-2. TopN
+	-3. 分组排序TopN(Spark中不支持二次排序，分组排序TopN类似二次排序)
+
+

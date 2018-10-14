@@ -1,0 +1,13 @@
+----------------------------------------------------------------
+Sun Dec 03 11:05:20 SGT 2017:
+Booting Derby version The Apache Software Foundation - Apache Derby - 10.10.2.0 - (1582446): instance a816c00e-0160-1a55-d19e-000015257e90 
+on database directory F:\O2O17\meituan-usertrack\metastore_db with class loader org.apache.spark.sql.hive.client.IsolatedClientLoader$$anon$1@61ece6d5 
+Loaded from file:/C:/Users/ibf/.m2/repository/org/apache/derby/derby/10.10.2.0/derby-10.10.2.0.jar
+java.vendor=Oracle Corporation
+java.runtime.version=1.7.0_60-b19
+user.dir=F:\O2O17\meituan-usertrack
+os.name=Windows 8.1
+os.arch=amd64
+os.version=6.3
+derby.system.home=null
+Database Class Loader started - derby.database.classpath=''

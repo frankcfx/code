@@ -1,0 +1,272 @@
+SparkProject
+====================================
+模块三：各个区域热门商品统计Top10信息
+  需求：
+    -1. 统计各个区域下面的各个商品的次数(以商品的点击作为热门指标)
+	-2. 统计各个区域访问次数最多的前10个商品
+	-3. 对数据进行一个信息的补全（商品数据补全）
+	-4. 最终结果保存MySQL
+  表信息：
+    -1. 用户行为信息表
+	  user_visit_action
+	  存储位置：Hive
+	  涉及到的字段：click_product_id、city_id
+	-2. 城市信息表
+	  city_info
+	  字段：city_id、city_name、province_name、area
+	  存储位置：RDBMs
+	  因为这张表的数据量一般不大，所以直接存储在RDBMs中，直接读取的话，对关系数据库不会产生太大的影响
+	-3. 商品信息表
+	  product_info
+	  原始的存储位置：RDBMs
+	  存储位置：Hive
+	  涉及到的字段：product_id、product_name、extend_info
+	    extend_info：存储一些额外的字段信息，是一个json格式的数据
+		eg:
+		  {
+		    product_type:0/1 => 0表示自营商品，1表示第三方商品
+		  }
+	  为什么要存储到Hive中?
+	    因为表的数据量比较大，而且该表的业务访问量也是比较大的，所以如果直接通过JDBC从关系型数据库中获取数据的话，可能会对业务产生一些影响
+		故对于这类的数据表而言，可以考虑将数据同步到Hive中以减少对关系型数据库的影响，降低对正常业务操作的影响
+		同步策略：
+		  -1. 第一次做一个全量的同步
+		  -2. 每隔一段时间(一般为24小时)进行一次增量同步<一般在访问量比较低的时候，一般为凌晨>
+		  -3. 每隔一段时间(一般为30天)进行一次全量同步操作(为了解决增量同步中可能存在的数据丢失、异常等问题)
+		技术点：调度技术、同步技术
+		调度技术：Linux Crontab、Oozie、Java Quartz等
+		同步技术：Java JDBC + HDFS、SQoop、SparkSQL、数据库日志等
+========================================================		  
+运行测试
+ Exception: java.lang.OutOfMemoryError thrown from the UncaughtExceptionHandler in thread "main"
+  -1. 因为代码实现中使用ROW_NUMBER函数，所以程序的入口是HiveContext
+  -2. 当使用HiveContext作为程序入口的时候，hive依赖包比较多，在默认的内存配置下，无法加载完全，所以就会出现OOM异常，需要给定运行的JVM参数: -XX:PermSize=128M -XX:MaxPermSize=128M
+========================================================	  
+模块四：广告流量的实时统计分析	  
+  需求：对收集得到的用户点击广告的数据进行实时统计，并将结果保存到关系型数据库
+    用户点击广告数据：KAFKA
+	数据处理方式：SparkStreaming
+	结果数据保存：MySQL
+  用户点击广告数据如何保存到Kafka中??
+    前提：用户点击广告数据也属于用户行为的数据
+	===> 如何从用户行为数据中实时的区分出来用户点击广告数据???
+	解决方案：
+	  -1. 使用Flume的Interceptors拦截器机制和Flume的扇出机制
+	  -2. 采用不同的Ningx日志服务器来分别收集用户广告点击数据和非用户广告点击数据
+	    用户广告点击数据url: http://track.ibeifeng.com/trakc1/IBF.gif?xxx
+		非用户广告点击数据url: http://track.ibeifeng.com/trakc2/IBF.gif?xxx
+		
+	  -3. 实时的ETL操作，将ETL操作结果保存Hive中，同时将用户广告点击数据也保存到KAFKA对应的Topic中
+  Nginx日志服务器接收到数据后，如何将数据发送给Flume/KAFKA????
+    -1. Nginx将接收到的数据，以日志文件的形成保存在Nginx的服务器上，然后通过Flume的exec source监控日志文件，最终将数据发送kafka中
+	-2. Nginx接收到数据后，转发给后台Tomcat中的web应用，web应用中的数据接收代码在接收到数据后，直接将数据通过KAFKA的API(product API)/Flume的AVRO组件，将数据发送到KAFKA/Flume中
+  具体需要实现的功能：
+    -1. 黑名单机制
+	  针对恶意用户而言，这类用户产生的广告点击数据，一般是需要过滤，不进行后续的代码统计
+	  黑名单机制：
+	    最近5分钟内广告点击次数超过100次的用户就是异常用户
+	  不支持黑名单用户的删除操作(模块四的代码不考虑黑名单删除)
+    -2.	实时累加统计每天各个省份Top5的热门广告点击数据
+	-3. 实时统计最近一段时间各个广告的点击数据
+  数据格式：
+    存储在Kafka中，数据以空格作为分隔符
+	字段：
+	  timestamp：毫秒级别的时间戳，点击广告的时间
+	  province：省份名称，点击广告的地址
+	  city：城市名称，点击广告的地址
+	  user_id: 用户id
+	  ad_id: 广告id
+====================================================
+SparkStreaming和Kafka的集成
+ -1. 集成方式
+   -a. Use Receiver
+     基于Kafka的High Level Consumer API
+	 RDD的分区数/Task数量和对应时间区间中形成的Block块数据的数量有关系 ---> 一一对应
+	 eg:
+	   KafkaUtils.createStream
+	     参数：
+		   Kafka的High Level Consumer相关参数
+		     zk的连接url
+			 group.id
+			 读取数据的topic名称以及读取该topic使用几个线程来读取
+   -b. Direct
+     基于Kafka的Simple Consumer API
+	 RDD的分区数量和Kafka对应的被消费的分区数量一致 ---> 一一对应
+	 eg: 
+	   KafkaUtils.createDirectStream
+	     参数：
+		   kafka服务的位置参数(broker.list)
+		   读取数据对应的topic名称、分区id以及开始读取数据的偏移量位置
+		   
+ -2. Offset偏移量的管理方式
+   -a. Use Receiver
+     基于Kafka自带的offset管理方式，间隔性的将offset偏移量提交到zk中保存，默认间隔时间为: 60s
+   -b. Direct
+     --1. 可以写代码进行offset偏移量的管理
+	 --2. 一般情况下，使用SparkStreaming应用的HA配置，自动将offset偏移量提交到checkpoint文件夹中进行管理(推荐)
+	 
+ -3. 应用程序的恢复方式
+   -a. Use Receiver
+     因为在数据接收器的模式下，会先将数据以Block块的形式进行存储，所以只要write log机制即可，可以通过参数: spark.streaming.receiver.writeAheadLog.enable(设置为true表示开启，默认为false)
+   -b. Direct
+     只要是SparkStreaming HA的模式就可以保证应用的恢复
+	 
+ -4. 应用程序的优化方式
+   Note：Spark应用的优化方式在SparkStreaming程序中基本上均可以使用
+   -a. Use Receiver
+     更改Block块的生成间隔时间
+	 启动多个receiver task来接收数据
+   -b. Direct
+     开启动态资源调整机制
+	 开启kafka数据消费动态机制(指定每个批次每个分区每秒最多消费的数据量)
+
+
+===================================================
+Spark基础知识
+  SparkCore
+	Spark的编译
+	Spark Local模式的配置
+	Spark Standalone环境配置
+	Spark Standalone Master HA配置
+	Spark Job History Server配置
+	Spark On Yarn配置
+	Spark On Yarn History Server配置
+	
+	Spark和MapReduce的比较
+	Spark案例：WordCount&TopN
+	Spark应用的组成结构
+	Spark案例：PV&UV
+	Spark的资源优化
+	Spark的内存模型(固定的内存分配模型&动态内存分配模型)
+	Spark动态的Executor资源分配模型
+	RDD的定义以及特性
+	RDD的读取方式以及RDD初始分区数量的设定方式
+	RDD的三大类型的API
+	  transforma API
+	    RDD转换，生成一个新RDD
+		新RDD的分区数量和调用的api有关，如果api为窄依赖，新RDD分区数和父RDD的分区数一致；如果api为宽依赖，
+		  -a. 对所有的分RDD按照分区数据进行排序操作，从大到小
+		  -b. 遍历所有排序好的父RDD，如果父RDD中有数据分区器并且数据分区器中的分区数大于0，那么子RDD的分区器就采用该父RDD的分区器
+		  -c. 当所有的父RDD中，均没有数据分区器的时候，并且此时SparkContext的SparkConf属性中存在spark.default.parallelism参数值，那么默认的分区数量为spark.default.parallelism的值
+		  -d. 如果还是没有的话，那么默认的子RDD的分区数量为最大的一个父RDD的分区数量
+	  action API
+	  presist API
+	RDD的依赖
+	RDD的Stage的划分机制
+	RDD的Shuffle机制以及Shuffle优化
+	Spark应用程序的容错
+	Spark应用中Job的调度方式
+	Spark应用的提交执行流程
+	Spark案例：分组排序TopN
+	Spark应用的优化
+	Spark的广播变量和累加器
+	
+  SparkSQL
+    Spark应用第三方jar文件解决方案
+	SparkSQL和Hive的集成方式
+	SparkSQL的thriftServer服务
+	DataFrame、RDD、Dataste的区别与联系
+	DataFrame、RDD、Dataste之间的转换方式
+	SparkSQL的DSL语法规则
+	DStream的数据读写方式: read/write
+	SparkSQL优化：
+	  SparkCore的优化方式
+	  HQL优化: 数据倾斜的优化方式
+	  SparkSQL参数优化
+	备注：HQL的相关语法、HQL优化
+	
+  Kafka
+    KAFKA的基本概念以及内部的原理
+	KAFKA的生产者、消费者的概念、原理以及数据的传输方式
+	Kafka和Flume的区别
+	Kafka和Flume集成的框架结构
+	
+  SparkStreaming
+    DStream是啥以及批次产生/执行流程（内部RDD的生命周期）
+	SparkStreaming和Storm的区别
+	SparkStreaming和Kafka的集成方式\offset管理方式\优化方式\应用恢复方式
+	  特别注意：当sparkstreamin和kafka集成方式为receiver的情况下，数据处理是无序的；当集成方式为direct的情况下，在数据没有进行shuffle之前，数据的处理是分区有序的
+	SparkStreaming的HA机制
+	DStream的几个API以及应用场景
+	  transform
+	  foreachRDD
+	  updateStateByKey
+	  window类型的API
+	  
+项目建议：
+  简历：项目名称 + 项目功能 + 自己负责的模块以及这个模块使用的技术
+  在写简历的过程中，最好准备一下几项内容：
+    -a. 项目功能
+	-b. 项目数据流程
+	-c. 项目的框架结构
+	-d. 在各个数据流节点使用的数据处理技术以及技术相关的基础知识点
+	-e. 额外的准备几个项目问题以备面试官询问
+  备注：
+    基本上所有的大数据项目都是起于数据的读取，终于数据的保存
+	结构：
+	  数据收集 -> 数据存储 -> 数据ETL -> 数据处理 -> 结果应用/结果展示
+
+
+============================================================		
+==额外=====================================================
+回过来看大数据类型项目的架构：
+    从业务分层角度来讲：
+      数据收集层
+        Flume/Kafka收集数据
+        SQoop/SparkSQL数据同步
+      数据存储层
+        HDFS/HBase/Hive
+        RDBMs
+        Redis/MongoDB
+      数据处理层
+        MapReduce
+        HiveQL
+        SparkCore/SparkSQL
+        SparkStreaming/Storm
+      数据结果展示层
+        Web项目: SpringMVC + MyBatis + MySQL
+
+    从特性来考虑：
+      高容错
+        Nginx：upstream机制(分流容错机制)
+        Flume: Flume的扇出 + Flume的sink groups
+        Kafka: Kafka支持分区备份(Parition Replication)
+        HDFS: HDFS Block Replication、NameNode HA机制
+        Yarn: NodeManager是无状态的，挂了可以直接将任务放到其他节点上执行；ResourceManager HA机制
+        MapReduce: Job容错机制(每个Task最多允许失败4次)
+        Spark应用：Job容错机制(每个Task最多允许失败4次)
+        Spark(standalone): worker机器是无状态的，master机器支持HA配置
+      水平高扩展性
+        Nginx: upstream机制(分流容错机制)
+        Flume：直接添加Flume的机器就可以了(Flume只是一个工具，可以单独存在)
+        Kafka：直接添加Broker服务即可
+        HDFS：直接添加DataNode机器即可，NameNode支持Federation配置
+        MapReduce: 依赖YARN/HDFS
+        Spark(on yarn): 依赖YARN
+        Spark(standalone): 直接添加worker机器即可
+      数据恢复机制
+        具有完善的监控机制，必要的人工干预，eg: 数据没有上传成功，可以人工上传
+    
+    从系统部署方面来讲：
+      工具类：
+        Flume：数据收集
+        Hive(client<cli>)：SQL On Hadoop
+        SQoop: 数据同步
+        Spark(Spark On Yarn): Spark应用程序提交客户端
+      服务类：
+        Kafka: 分布式日志收集系统
+        Oozie: 任务调度(定时任务)
+        HDFS：分布式文件系统
+        Yarn：资源管理系统
+        Spark(Spark Standalone): Spark自带资源管理系统
+        HBase: 分布式数据存储系统
+        Hive(Hive metastore): Hive源数据管理服务
+      辅助类：
+        CM(Cloudera Manager): CDH的服务管理工具, 包含：集群管理(添加、删除、修改配置等)、服务监控、服务器资源监控等
+        ambari(Apache/HDP Manager): Apache/HDP版本的hadoop生态圈管理工具，功能类似CM
+        hue: 提供便利操作的web界面(hdfs、hive、oozie等)
+        zabbix: 运维利器，主要功能：服务器资源监控、服务监控、进程监控等。除了该工具外，可选Ganglia、Nagios等
+        通过Flume收集日志数据，同时将其发送到Kafka, Streaming程序实时处理日志数据，当出现异常数据的时候(Error log)，直接通过开发人员
+	  
+	  
+	  

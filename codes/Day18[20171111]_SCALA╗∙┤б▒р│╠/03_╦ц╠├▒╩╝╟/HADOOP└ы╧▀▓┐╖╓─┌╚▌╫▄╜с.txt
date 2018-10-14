@@ -1,0 +1,113 @@
+Hadoop离线部分的知识点总结
+=================================
+Hadoop
+  组成结构
+  Hadoop2.x和hadoop1.x的区别
+    NameNode HA ===> NameNode单节点问题
+	NameNode Federation ===> NameNode扩容问题
+	YARN ===> JobTracker的功能分离
+  Hadoop3.x和Hadoop2.x的区别
+    NameNode HA支持多NN配置(1Active + 多Standby)
+	MapReduce分布式计算框架进行了一些优化，包括本地执行...
+
+HDFS
+  分布式的文件存储系统
+  组成结构(NN、DN、JN...)
+  文件的备份机制
+  文件的读写流程
+  文件的容错和框架系统的扩张
+
+Yarn
+  分布式的集群资源管理系统
+  组成结构(RM\NM)
+  Job的提交流程(MapReduceJob提交流程来说明)
+  Yarn的资源管理/配置(yarn-site.xml中的配置内容/MapReduce Job的资源优化)
+  YARN的调度机制
+  YARN的容错、扩容怎么进行
+
+MapReduce
+  分布式的计算框架
+  组成：
+    ApplicationMaster、MapTask、ReduceTask
+	InputFormat -> Mapper -> Shuffle -> Reduce -> OutputFormat
+	默认的组件：
+	  TextInputFormat
+	  KeyValueTextInputFormat
+	  TextOutputFormat
+	  HashPartitioner
+	MapTask数量 ==> 分片数目
+	ReduceTask数量 ==> 分区数目
+	分片/分区有啥区别???
+	   -1. 分片指的是原始数据的分片(将原始数据分为一个一个的片段，然后每一个片段使用一个task进行处理<MapTask>),InputFormat中的getSplit方法返回的结果就是Job任务划分好的分片集合
+       -2. 分区是指map和reduce之间的时候，从map传输到reduce，reduce的数量即分区数量==>在shuffle过程/数据转换过程中，数据的一个计算/分布情况就叫做分区；在MapReduce中特制shuffle过程中将数据发送到多个reduce的过程
+	   -3. 总结：分片和分区其实有一定的相似性，都是决定具体的task执行数量的；区别在于分片是对于原始数据输入而言的，分区是对于处理过程中的数据分布而言的。
+  shuffle机制：
+    shuffle的流程????
+	如何进行shuffle阶段的优化操作???
+  MapReduce的优化
+    -1. 增加reduce task数量, 参数: mapreduce.job.reducers控制，默认为1
+	-2. 增加map task数量
+       Map的数量是由InputFormat的getSplit方法返回的结果集合决定的，该方法会返回一个InputSplit集合，一个InputSplit就表示一个map task的执行 ==> 更改MapTask数量实质上是更改getSplit方法返回的集合大小来决定的
+	   ====> 如何增加getSplit方法返回的集合值??? ==> 具体的实现代码有关
+	   MapReduce和HBase整合 ==> 一个Region就是一个MapTask，没法在mapreduce中更改
+	   旧版本的TextInputFormat：
+	     mapreduce.input.fileinputformat.split.minsize: 给定一个分片最小大小，默认为1
+		 mapreduce.job.maps：控制默认需要的split数量，默认为2
+       新版本的TextInputFormat:
+	     mapreduce.input.fileinputformat.split.minsize: 给定一个分片最小大小，默认为1
+		 mapreduce.input.fileinputformat.split.maxsize: 给定一个分片最小大小，默认为Long.MaxValue
+		 增大Map Task的数量可以通过参数maxsize设置的比block size小来控制
+		 减小Map Task的数量可以通过参数minsize设置的比block size大来控制
+	   备注：在FileInputFormat(旧版本/新版本)中在分片的时候，对于一个文件的最后一部分内容，如果内容的剩余大小小于110%的splitsize，那么就将剩余的所有内容放到一个分片中，eg：140M的一个文件只会有一个MapTask（默认情况） 
+    -3. 增加job的内存+CPU（mapred-site.xml）
+	-4. Shuffle的优化
+	-5. 数据倾斜解决方案
+	   -a. 自定义partitioner或者增加reduce的数量
+	   -b. 两阶段聚合(将一个mapreduce job拆分为两个job，第一个做一个局部的数据聚合，第二个做一个全局的数据聚合)
+	   -c. map join
+	   -d. reduce join + filter(map中将无用数据过滤)
+	   -e. reduce join + map端数据前缀添加 + reduce数量添加
+  案例：
+    -1. TopN
+	   如果N比较小怎么实现???
+	   如果N特别大怎么实现???
+    -2. MapReduce二次排序	
+================================================
+使用比较多的框架
+Flume
+  Flume Agent的结构
+  Flume的结构(应用结构)
+  Flume Agent的常用组件及功能
+  Flume的容错、扩展(sink group、扇出)
+Hive
+  HQL语法
+    谓词下推
+	limit的语法 ==> HQL实现分页查询
+  Hive的分区表
+  order by、sort by、distxxx by区别
+  hive的优化(HQL优化 + MapReduce参数)
+
+=======================================================
+扩展了解
+hbase
+  hbase结构
+  hbase的数据读写流程
+  hbase的表结构设计
+zookeeper
+  watcher机制
+  分布式锁
+  
+========================================================
+了解即可
+sqoop
+oozie
+hue
+cm
+
+=======================================================
+额外:
+  Spark的内容整理总结见每个模块的最后一个视频(视频名称一般为: xxxx总结.exe)
+  Spark部分中，所有以"扩展"开头的视频基本上都涉及到源码内容，根据自己的情况来观看，不是必须掌握的
+  Spark部分中，所有以"额外"开头的视频基本上就是我们上课没有讲的内容，比如面试题的视频
+
+

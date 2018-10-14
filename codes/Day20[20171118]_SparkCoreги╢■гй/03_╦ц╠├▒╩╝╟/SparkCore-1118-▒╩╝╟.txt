@@ -1,0 +1,422 @@
+Spark core
+=================================
+Spark on    standalone
+ 将spark程序运行到
+ yarn
+   NodeManager
+	  管理当前节点的资源以及启动container(会启动对应的task任务)
+	ResourceManager
+	  管理/调度集群资源，主要包括：申请、调度、监控....
+	资源：
+	  CPU&内存
+	  yarn.nodemanager.resource.memory-mb:8192，给定当前这台NodeManager机器允许分配的内存大小，实际上这个只是一个虚拟的值，表示这台机器允许yarn允许的任务总使用内存为8G，每个任务使用内存由执行的时候来申请。该值和机器的物理内存没有必然的关系；在实际工作中，一般任务该值为实际内存的值
+      yarn.nodemanager.resource.cpu-vcores:8，给定当前这台NodeManager机器允许分配的CPU核数，该值是一个逻辑CPU的值
+ standalone 
+    备注：一台机器允许多个Worker进程存在
+    Master：
+	  集群资源管理，包括资源的申请、调度、监控....
+	Worker
+	  对当前进程允许分配的资源进行管理，包括资源的管理以及Executor的启动
+	资源：
+	  CPU&内存
+  Standalone配置：
+    -0. Spark Linux的本地执行环境已经搭建好了
+    -1. 修改spark-env.sh文件内容
+SPARK_MASTER_IP=hadoop-senior01.ibeifeng.com
+SPARK_MASTER_PORT=7070
+SPARK_MASTER_WEBUI_PORT=8080
+SPARK_WORKER_CORES=2 ## 指定当前机器上的每个worker进程允许分配的逻辑CPU核数
+SPARK_WORKER_MEMORY=2g ## 指定当前机器上的每个worker进程允许分配的内存数量(可以认为是一个逻辑内存值)
+SPARK_WORKER_PORT=7071 
+SPARK_WORKER_WEBUI_PORT=8081
+SPARK_WORKER_INSTANCES=2 ## 指定当前机器上的worker进程数量  
+    -2. mv conf/slaves.template conf/slaves
+    -3. vim conf/slaves
+备注：一行一个机器的主机名(worker进程所在的机器的host名称)	
+hadoop-senior01.ibeifeng.com
+    -4. 额外 -> 完全分布式的配置
+	  只需要在slaves文件中添加slave从节点的host名称即可(前提ssh、host映射等hadoop的依赖环境均已完成)，然后将修改好的spark安装包copy到其它的slave机器上即可完成分布式的安装
+    -5. 启动服务（zuihao）
+	  sbin/start-master.sh
+      sbin/start-slave.sh spark://hadoop-senior01.ibeifeng.com:7070
+      ==> 关闭所有服务: stop-all.sh
+      ==> 启动所有服务：start-all.sh
+    -6. 查看/测试
+	  jps查看master和worker进程
+	  web ui：http://hadoop-senior01:8080/
+      bin/spark-shell --master spark://hadoop-senior01.ibeifeng.com:7070
+	  ## 当默认4040被占用的时候会报错，会自动将web ui的端口号往上递推到4041、4042.....
+	  ## 当spark和hive集成没有完成的时候，启动多个Spark-shell命令行会报错(这个异常大家可以先思考，我们后面讲sparksql的时候讲详细讲解异常原因)
+	  
+======================
+Spark Standalone Master HA
+  http://spark.apache.org/docs/1.6.1/spark-standalone.html#high-availability
+  -1. Single-Node Recovery with Local File System
+    基于单节点本地文件系统的Master恢复机制
+	修改${SPARK_HOME}/conf/spark-env.sh
+SPARK_DAEMON_JAVA_OPTS="-Dspark.deploy.recoveryMode=FILESYSTEM -Dspark.deploy.recoveryDirectory=/tmp"
+  -2. Standby Masters with ZooKeeper
+    基于zk的一种master结构的ha机制
+SPARK_DAEMON_JAVA_OPTS="-Dspark.deploy.recoveryMode=ZOOKEEPER -Dspark.deploy.zookeeper.url=hadoop1:2181,hadoop2:2181,hadoop3:2181 -Dspark.deploy.zookeeper.dir=/spark-ha"
+    备注：
+	  配置spark-env.sh的时候，变量SPARK_MASTER_IP配置当前机器的master IP地址，如果是slave节点，该值可以是任意一台机器的master IP
+	  master url可以使用单台机器的， 也可以使用多台机器的url配置， spark://host1:port1,host2:port2,host3:port3
+
+=========================================
+应用的监控
+  -1. 使用专门的运维工具进行监控，比如: zabbix等等(网络、磁盘、内存、CPU、进程等等)
+  -2. 使用CM、Ambari大数据专门的运维管理工具(网络、磁盘、内存、CPU、服务是否存在等)
+  -3. 软件自带的一些web界面进行监控，eg: spark 8080、hdfs 50070、yarn 8088、mapreduce job history 19888 ....
+  -4. 通过oozie等调度工具进行任务的监控(当任务执行失败后，通知开发人员)
+  -5. 通过Linux自带的进程恢复机制，在启动进程的时候设置为当进程宕机后自动重启(Linux的supervise方式启动)
+
+===============================
+Spark的应用监控
+  http://spark.apache.org/docs/1.6.1/monitoring.html
+  -1. 针对正在运行的应用，可以通过web界面监控，默认端口号为4040，当端口号被占用的时候，会自动的往上递增(eg: 4041\4042....)，该端口号的值由参数: spark.ui.port来控制，可以在启动应用的时候，通过该参数明确指定默认的开始端口号
+  -2. 如果应用已经结束/执行完成，那么可以通过spark的job history server服务来查看
+
+MapReduce Job History Server
+  -1. 开启日志聚集功能(将执行日志上传HDFS)
+  -2. 给定日志上传HDFS的文件夹路径
+  -3. 启动mr的job history服务(读取hdfs上的日志文件，并进行web展示)
+
+Spark Job History Server
+  -1. 创建hdfs上的spark应用日志存储路径
+     hdfs dfs -mkdir -p /spark/history
+  -2. 修改配置文件(开启日志聚集功能, 指定spark应用的数据写到哪个文件中)
+     mv conf/spark-defaults.conf.template conf/spark-defaults.conf
+	 vim conf/spark-defaults.conf
+spark.eventLog.enabled			true
+spark.eventLog.dir			hdfs://hadoop-senior01.ibeifeng.com:8020/spark/history
+  -3. 测试一下Spark应用是否会将执行日志上传HDFS
+    bin/spark-shell
+  -4. 配置spark的job history server服务的相关参数（指定从哪个文件中读取日志数据进行展示操作）
+    vim conf/spark-env.sh
+SPARK_HISTORY_OPTS="-Dspark.history.fs.logDirectory=hdfs://hadoop-senior01.ibeifeng.com:8020/spark/history -Dspark.history.ui.port=18080"
+  -5. 启动Spark的Job History服务
+    sbin/start-history-server.sh
+    http://hadoop-senior01:18080/
+
+Spark Job History Rest API:
+  http://<server-url>:18080/api/v1
+  http://hadoop-senior01:18080/api/v1/applications
+  http://hadoop-senior01:18080/api/v1/applications/local-1506134821636/jobs
+备注：如果hdfs是ha配置的话，那么history的文件夹路径配置成为: hdfs:/spark/history即可，不需要在path中给定hdfs文件系统具体的主机名和端口号，通过hdfs的配置文件给定，即需要将core-site.xml和hdfs-site.xml添加到项目的classpath环境变量中(即完成spark和hdfs的集成)<两个地方都需要给定的>
+
+========================================
+MapReduce应用的组成结构
+  ApplicationMaster + Tasks(MapTask/ReduceTask)
+    ApplicationMaster: 负责task的调度以及task运行资源的申请
+	Task：具体的数据处理
+  一个应用就是一个Job
+    一个Job分为两个不同的阶段（MapStage和ReduceStage）
+	  一个Stage中分为多个Task
+	    MapTask的数量实质上就是InputFormat返回的InputSplit分片的数量
+		ReduceTask的数量实质上就是分区数
+
+Spark应用的组成结构
+  Driver + Executors
+    Driver：运行SparkContext上下文的地方(JVM)、SparkContext初始化的地方(JVM)、RDD初始化以及构造转换的地方(JVM)、Task运行资源申请调度的地方(JVM)
+	   一般情况下，认为运行main方法的地方就是driver进程
+	   一个应用只会有一个driver
+    Executor:
+	  具体task运行的进程，一个executor中可以运行多个task任务，一个应用可以有多个executor
+	  executor是运行在worker/nodemanager上的进程，一个worker/nodemanager上可以运行多个executor
+  一个应用可以包含多个Job(>=0)
+    每个Job包含多个Stage(>0)
+	  每个Stage包含多个Task(>0)
+	    Task是最小运行单位，是executor中处理对应分区数据的线程
+		Task的数量等于RDD的分区数量
+		分区指的是数据的分布情况/划分的情况，task指的逻辑代码+数据的执行状态
+		一个stage的中的所有task的执行逻辑是一样的，唯一的区别的是处理不同分区的数据
+  
+============================================
+Windows上执行Spark应用(IDEA中)
+  -1. Exception in thread "main" org.apache.spark.SparkException: A master URL must be set in your configuration
+    解决方案： SparkConf中指定master信息 ==> 一个spark应用的执行必须给定在哪儿执行
+  -2. Exception in thread "main" org.apache.spark.SparkException: An application name must be set in your configuration
+    解决方案： SparkConf中指定应用名称
+  -3. Exception xxxx null/bin/winutil.exe
+     原因是windows上没有安装HADOOP环境导致的
+	 这个异常不影响代码的执行，可以不管
+	 解决方案：
+	   将hadoop的安装包(linux上的)解压到windows上的任何路径下(不能包含空格和中文), 将winutil.exe等相关文件放到hadoop根目录下的bin文件夹中，然后配置HADOOP_HOME环境变量，重启IDEA，如果还没有生效，重启机器
+	   ====> 参考：06_参考资料\Windows环境中MR任务的三种运行方式\MR任务的三种运行方式.docx文件内容进行安装, winutil.exe相关文件在压缩包hadoop-common-2.2.0-bin-32.rar
+  -4. (windows可能出现)有可能会遇到：NullPointerException
+      前提: 你的代码没有任务问题(可以在spark-shell中执行以下，检查以下是否有问题)
+	  产生原因：是由于windows和linux底层操作性不同导致的问题，其实spark的底层是mapreduce相关组件，在执行mapreduce相关组件的过程中，可能会由于windows系统中缺少某些服务导致API调用没有正常的返回值，从而出现空指针异常，这些异常其实不会太影响spark应用的执行
+	  解决方案：直接将相关的一些源码进行注释或者修改 => call me
+
+=========================================
+spark应用的参数设置
+  可以在三个地方设置参数
+    -1. ${SPARK_HOME}/conf/spark-defaults.conf
+	-2. ${SPARK_HOME}/bin/spark-submit参数
+	-3. 代码中构建SparkConf对象的时候给定参数
+  备注：
+    优先级：3 > 2 > 1
+	尽量不要讲参数写在代码中，因为有一些参数是在SparkContext启动前生效的，比如：spark on yarn的时候，给定applicationmaster进程的内存大小
+
+===========================================
+IDEA中的项目打包形成Jar文件
+  备注：打包之前，记住修改代码(eg: 注释setMaster、修改hdfs路径...)
+  -1. 使用IDEA自带的打包的插件进行打包
+  -2. 使用Maven的命令进行打包
+
+================================================
+Linux上Spark应用运行
+  http://spark.apache.org/docs/1.6.1/submitting-applications.html
+  -1. 将需要运行的jar文件上传Linux系统
+  -2. 通过spark-submit脚本来进行任务的提交
+命令：
+1. 默认就是local环境（master url为空）
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+2. 明确给定local环境
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master local[10] \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+3. standalone运行（client）
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master spark://hadoop-senior01.ibeifeng.com:7070 \
+  --conf "spark.ui.port=5050" \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+4. standalone运行(cluster)
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master spark://hadoop-senior01.ibeifeng.com:7070 \
+  --deploy-mode cluster \
+  --conf "spark.ui.port=6060" \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+5. standalone运行(cluster, rest api)
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master spark://hadoop-senior01.ibeifeng.com:6066 \
+  --deploy-mode cluster \
+  --conf "spark.ui.port=6060" \
+  --conf "spark.rpc.numRetries=60" \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+========================================================
+资源调忧
+  含义：分配适合应用的资源，让应用可以有一个比较快速的执行速度；分配资源其实就是：executor的数量、每个executor的cpu和内存、driver的cpu和内存
+其实就是spark-submit的一些相关参数以及spark应用的配置参数:
+  http://spark.apache.org/docs/1.6.1/configuration.html
+参数说明：
+  spark.task.cpus:1, 给定一个task需要多少cpu核数，该值和应用的总cpu核数一起决定最大支持的并行度是多少
+  spark.driver.maxResultSize:1g, 给定executor返回driver的最大大小，默认为1g，超过该值的情况下，会报错；当设置为-1的时候表示不进行限制
+  spark.cleaner.ttl：给定清空rdd、dataframe、dstream等相关元数据的间隔时间，默认为空，可以设置为:"spark.cleaner.ttl=1d"
+  spark.network.timeout: spark中所有网络连接的默认超时时间，默认为120s
+  spark.rpc.numRetries: rpc连接重试次数，默认为3次
+  spark.task.maxFailures： task失败重试次数，默认为4次
+  
+  --master MASTER_URL         spark://host:port, mesos://host:port, yarn, or local. 给定应用程序运行在哪儿
+  --deploy-mode DEPLOY_MODE   Whether to launch the driver program locally ("client") or on one of the worker machines inside the cluster ("cluster") (Default: client). 给定driver运行在哪儿，默认是client，可选cluster；client表示driver进程运行在执行spark-submit脚本的机器上；cluster表示driver进行运行在集群的worker节点上(任选一个) ===> 在实际的工作中，一般运行为cluster
+  --class CLASS_NAME          Your application's main class (for Java / Scala apps). 给定应用的类名称(包名+类名)
+  --conf PROP=VALUE           Arbitrary Spark configuration property 给定spark应用的配置项，比如：端口号、cpu / pre task....
+  --driver-memory MEM         Memory for driver (e.g. 1000M, 2G) (Default: 1024M). 给定driver的内存大小，默认为1G
+  --executor-memory MEM       Memory per executor (e.g. 1000M, 2G) (Default: 1G).  给定每个executor的内存大小，默认为1G
+spark standalone cluster
+  --driver-cores NUM          Cores for driver (Default: 1). 给定driver运行需要占用几个cpu核数，默认为1
+Spark standalone、mesos cluster
+  --supervise                 If given, restarts the driver on failure. 给定当driver进程宕机后，进行自动的恢复操作
+spark standalone、mesos
+  --total-executor-cores NUM  Total cores for all executors 给定一个应用所有的executor中cpu核数的总核是多少，默认为all
+spark standalone、yarn
+  --executor-cores NUM        Number of cores per executor. (Default: 1 in YARN mode, or all available cores on the worker in standalone mode) 给定每个executor的cpu数量，standalone模式下默认为all，yarn模式下默认为1
+spark yarn
+  --driver-cores NUM Number of cores used by the driver, only in cluster mode (Default: 1). (cluster模式下)给定driver运行需要占用几个cpu核数，默认为1
+  --num-executors NUM         Number of executors to launch (Default: 2). 给定一个应用启动几个executor，默认为2个
+
+==================================================
+Spark内存管理模型(Executor的内存管理机制)
+  http://spark.apache.org/docs/1.6.1/configuration.html#memory-management
+  executor中的内存主要分为两大区域：
+    storage: 数据存储所占用的内存区域，eg：cache、广播变量、共享变量、driver传递给executor的变量......
+	shuffle：如果rdd的执行过程中，存在shuffle操作，那么shuffle过程中使用的一个内存(Spark的shuffle类似MapReduce的shuffle机制), eg：groupByKey、reduceByKey....
+  老内存管理模型：
+    内存的分配是固定的，应用没法根据业务特征进行动态调整
+	spark1.6.X之前使用该模型
+	参数：
+	  spark.memory.useLegacyMode: false， 当设置为true的时候表示启动老的固定内存模型, 默认为false
+	  spark.shuffle.memoryFraction：0.2，给定shuffle部分占用内存的比例，默认为executor的20%
+	  spark.storage.memoryFraction：0.6, 给定storage部分占用内存的比例，默认为executor的60%
+	  
+  新的内存管理模型：
+    叫做动态内存调度模型（指的是将storage和shuffle部分的内存进行一个动态的调整，根据job的运行情况来进行调整）
+	Spark1.6+版本默认使用该模型
+	参数：
+	  spark.memory.fraction：0.75，给定storage和shuffle总共占用executor的内存，默认为75%
+	  spark.memory.storageFraction：0.5，给定动态调整部分，storage最少占用多少内存，默认为50%
+	机制：
+	  -1. 每个executor的内存分为三部分：reserved memory、used memory、storage&shuffle memory
+	  -2. reserved memory固定为300M，实际上可以通过参数: spark.testing.reservedMemory来进行控制，默认情况下要求每个executor的内存是reserved memory大小的1.5倍（>=300*1.5=450M）
+	  -3. storage&shuffle memory所指定的百分比其实是executor内存去掉reserved memory之后的一个比值
+	  -4. used memory即除了reserved memory和storage&shuffle memory之外的内存
+	动态变化机制：(storage&shuffle memory)
+	  -1. shuffle操作会删除storage操作占用的execution内部的内存
+	  -2. shuffle操作不会占用storage memory(会保证storage最少具有50%的内存)， 当execution内部的内存不够的时候，shuffle直接将数据溢出磁盘文件
+	  -3. storage会占用execution部分的内存，但是要求execution部分中，不存在shuffle数据(也就是为空)
+	  
+==============================================
+Spark的动态资源调度机制
+  指根据应用或者业务的需要，动态的调整executor的数量
+  应用场景：适合一直运行的spark应用，可以解决程序访问高峰和低谷所产生的资源利用率的问题，一般用于sparkstreaming程序和sparksql的thrift server服务
+  相关参数：
+    http://spark.apache.org/docs/1.6.1/configuration.html#dynamic-allocation
+	spark.dynamicAllocation.enabled：false，当设置为true的时候表示开启动态资源调度机制
+	spark.dynamicAllocation.initialExecutors：给定初始化的executor数量，默认为最少executor数量
+	spark.dynamicAllocation.maxExecutors：给定最多的executor数量，必须给定
+	spark.dynamicAllocation.minExecutors：给定最少的executor数量，默认为0，必须给定
+
+========================================================
+Spark on yarn
+  将spark应用程序运行在yarn上
+  http://spark.apache.org/docs/1.6.1/running-on-yarn.html
+  配置：
+    -1. 将yarn-site.xml等相关的yarn配置信息添加到spark应用的classpath环境变量中
+	 ==> 配置HADOOP_CONF_DIR或者YARN_CONF_DIR变量在spark-env.sh中
+	 ==> 将yarn-site.xml等文件添加到对应的文件夹中
+    -2. 启动hdfs和yarn
+	  start-dfs.sh
+	  start-yarn.sh
+	-3. 备注：
+	  如果运行方式为SPARK ON YARN driver cluster mode，建议配置HADOOP_HOME环境变量
+	-4. 测试运行
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master yarn \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master yarn \
+  --deploy-mode cluster \
+  --conf "spark.yarn.submit.waitAppCompletion=false" \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+备注：
+  spark.yarn.maxAppAttempts: driver cluster模式下，给定driver宕机后，重试的默认次数；默认值为yarn的yarn.resourcemanager.am.max-attempts(默认即为2次)， 但是该值要求不能大于yarn资源管理框架中配置的yarn.resourcemanager.am.max-attempts参数值
+
+spark on yarn的时候spark应用的组成
+  Driver(ApplicationMaster) + Executors
+  client deploy mode:
+    driver：就是spark-submit执行的那一台机器，负责job的调度和applicationmaster运行资源的申请
+	applicationmaster: 运行在NodeManager上的一个进程，负责executor运行资源的申请以及executor的运行，每个应用只有一个applicationmaster
+	executor: 运行在NodeManager上的一个进程，一个NodeManager上可以运行多个Executor
+  cluster deploy mode:
+    driver/applicationmaster：
+	  driver和applicationmaster进程合并成为一个进程，主要负责：executor运行资源申请、job的调度管理等
+	  运行在NodeManager上
+	executor: 运行在NodeManager上的一个进程，一个NodeManager上可以运行多个Executor
+	
+===================================
+Spark on Yarn Job History配置
+  http://spark.apache.org/docs/1.6.1/running-on-yarn.html
+  -1. 配置并启动spark的job history server服务
+    http://hadoop-senior01:18080/
+  -2. 配置yarn-site.xml中，给定日志聚集以及服务url信息，要求所有的yarn-site.xml均修改，并且重启yarn和mr job history服务
+  <property>
+    <name>yarn.log-aggregation-enable</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>yarn.log.server.url</name>
+    <value>http://hadoop-senior01.ibeifeng.com:19888/jobhistory/logs</value>
+  </property>
+  -3. 修改spark应用程序配置参数，在spark-defaults.conf中进行修改
+spark.yarn.historyServer.address	http://hadoop-senior01.ibeifeng.com:18080
+  -4. 测试运行
+./bin/spark-submit \
+  --class com.ibeifeng.bigdata.spark.app.core.PVAndUVSparkCore \
+  --master yarn \
+  --deploy-mode cluster \
+  --conf "spark.yarn.submit.waitAppCompletion=false" \
+  /home/beifeng/o2o17/logs-analyzer-1.0.jar
+
+=======================================
+RDD
+  Resilient Distributed Datasets ==> 弹性分布式数据集
+    Resilient: 可以根据不同的数据采用不同数目的分区来对数据进行处理/管理操作, 而且在数据的处理或者管理的时候，可以仅仅只对部分的分区进行处理，而不是对所有分区进行处理操作；并且当task执行失败的时候，可以仅仅恢复该task对应分区的对应父分区的task的任务的执行，不需要父RDD中的所有分区数据重新执行处理
+	Distributed: 数据文件(hdfs文件<block块>、shuffle的磁盘文件&内存文件<block>)可以存在于一个节点上，也可以是多个节点上；task的运行的时候，会将数据的处理逻辑放到数据节点上运行===> 数据本地化
+	Dataset：内部数据可以认为是一个数据集合
+  RDD中的数据是不可变、分区存在的；也就是说每次调用一个API生成一个新的RDD的时候，旧RDD中的数据是没有发生变化的，发生变化的数据是在新RDD中
+  RDD有五大特性：见ppt
+  备注：RDD中是没有数据的，RDD中存储的是数据存储位置信息以及数据的处理方式的代码(数据读取方式的代码)，调用RDD的compute方法的时候，基于存储的位置信息以及数据处理方式的逻辑代码，进行数据的处理，并返回一个数据的迭代器
+
+=====================================================
+RDD创建底层执行原理
+  以sc.textFile为案例讲解：
+    -1. 底层使用org.apache.hadoop.mapred.TextInputFormat进行数据的读取
+	-2. 形成的RDD中的分区数量由InputFormat的getSplits方法决定，getSplits方法返回多少个split，就对应多少个Partition分区，一个split对应一个Partition
+	-3. 在调用getSplits方法的时候，传入的第二个参数表示最终形成的分片集合中的最少split的数量，默认为2(可以在textFileAPI调用的时候给定其它值)
+	-4. 在compute的方法中，使用InputForamt返回的RecordRecord读取当前分区的数据
+	-5. RDD的形成底层是依赖MapReduce的InputFormat的
+  总结：
+    -1. RDD的分区
+	  RDD的分区只是一个逻辑概念，只存储了当前分区需要处理的数据的相关元数据信息(eg: 数据的存储位置、数据的偏移量....)
+	  第一个RDD的分区数量是由InputFormat的getSplits方法决定的
+	  ====> RDD中不存储具体的数据的，只存储各个分区信息
+    -2. RDD的构建
+	  RDD的构建依赖MapReduce的InputFormat来构建
+	  可以通过自定义MapReduce的InputFormat来进行RDD的构建操作
+	  
+====================================================
+RDD的构建方式
+  -1. 直接将内存中的数据转换为RDD(底层不是InputFormat)
+    val seq = Seq(1,3,4,5,6,7,8)
+	val rdd = sc.parallelize(seq)
+  -2. 外部数据(非内存中数据)：基于某个给定的InputFormat进行数据读取并创建RDD
+    sc.textFile: 底层使用旧版本的TextInputFormat进行数据读取
+	sc.hadoopFile: 底层使用旧版本的InputFormat进行数据读取，并要求给定对应的InputFormat类名称，并且该API，默认表示读取HDFS上的文件内容
+	sc.newAPIHadoopFile: 底层使用新版本的InputFormat API进行数据读取，并要求给定读取数据对应的path路径和对应的数据读取InputFormat类名称
+	sc.hadoopRDD:底层使用旧版本的InputFormat进行数据读取，并要求给定对应的InputFormat类名称，但不要求必须读取hdfs文件
+	sc.newAPIHadoopRDD:底层使用新版本的InputFormat进行数据读取，并要求给定对应的InputFormat类名称，但不要求必须读取hdfs文件
+
+===================================================
+RDD的三大类型的API
+  -1. transformation(transformation算子)：转换操作
+    功能：将一个RDD转换成为另外一个RDD，也就是RDD的构建；这类操作中指定的函数不会立即执行，只有等到RDD对应的Job真正运行的时候(也就是compute方法被调用的时候)，给定的函数才会被执行
+	这类算子属于lazy的，在RDD调用这类算子的过程中，实质上是一个在Driver中构建DAG图的一个过程; 实质上是在Driver中构建RDD的依赖图，也就是RDD的DAG执行图
+	如果一个RDD的API返回值为RDD类型，那么这个API就是transformation类型API
+	
+  -2. action(action算子): 动作/操作
+    功能：触发该RDD对应Job的提交执行，并将rdd对应的DAG图划分为Stage后，进行提交到executor中执行的操作，并且将最终的执行结果返回给driver(可能返回的是一个Unit对象、也有可能是一个数据集合)
+  -3. persistence(RDD的结果数据缓存到磁盘或者内存中)
+    功能：将RDD的结果数据缓存到内存或者磁盘中，或者将缓存的数据进行清空操作
+	备注：缓存操作是lazy的，清空缓存的操作是立即执行的
+	缓存数据的功能：
+	  1. 将数据缓存到磁盘或者内存中，可以减少代码的执行，加快代码的执行速度(前提：被缓存的RDD是一个重复使用的RDD)
+	  2. 如果task执行失败，在恢复的过程中，task可以直接从内存或者磁盘中获取父分区的对应结果数据，减少重复task的执行
+	  3. rdd的缓存是基于分区的，也就是说可以缓存一个RDD的部分分区
+    API:
+	  rdd.cache：将rdd的数据缓存到内存中
+	  rdd.persist：将rdd的数据缓存到指定的缓存级别中
+	  rdd.unpersist(): 清除缓存
+	  
+===================================================
+RDD的数据输出    
+  -1. task的执行结果返回Driver
+    eg: rdd.take、rdd.collect、rdd.top、rdd.first、rdd.count.....
+	底层执行原理：
+	  -1. 首先获取每个分区的执行结果(executor中执行，结果返回driver)
+	  -2. 然后对所有分区的执行结果做一个合并操作(driver中接受分区结果，然后进行合并操作)
+	  -3. 最终返回一个最终结果
+  -2. 使用MapReduce的OutputFormat进行数据输出
+    rdd.saveAsTextFile => 底层调用旧版本的TextOutputFormat进行数据输出
+	rdd.saveAsHadoopFile => 底层调用旧版本的OutputFormat进行数据输出，要求给定具体的OutputFormat以及对应输出到HDFS上的文件夹名称
+	rdd.saveAsNewAPIHadoopFile => 底层调用新版本的OutputFormat进行数据输出，要求给定具体的OutputFormat以及对应输出到HDFS上的文件夹名称
+	rdd.saveAsHadoopDataset => 底层调用旧版本的OutputFormat进行数据输出，要求给定具体的OutputFormat；可以支持输出到任意的数据存储系统中
+	rdd.saveAsNewAPIHadoopDataset => 底层调用新版本的OutputFormat进行数据输出，要求给定具体的OutputFormat；可以支持输出到任意的数据存储系统中
+  -3. 使用foreachPartition API自定义数据输出代码
+    TODO: 该API中给定的函数是在executor中执行的，是对每个分区的数据进行一个处理操作
+	TODO: 将数据写入到MySQL、Redis一般采用该方式
+  备注：方式二和方式三一样，都是对分区数据进行输出
+

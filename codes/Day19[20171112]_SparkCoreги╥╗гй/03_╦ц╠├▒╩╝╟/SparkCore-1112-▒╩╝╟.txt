@@ -1,0 +1,222 @@
+SparkCore
+=============================================
+MapReduce
+  分布式计算框架
+  缺点：
+    -1. 执行速度慢
+	  IO瓶颈：网络IO和磁盘IO
+	  shuffle瓶颈：数据需要写出到磁盘，而且具有排序的操作，并且内存的利用率低/不太灵活
+	-2. 框架上的缺陷
+	  MapReduce不适合迭代类型的或者组合类型的任务(一个任务中需要多个Job一起执行才能实现)  =====>   因为数据会写到HDFS上
+	  只有两个算子: map和reduce；而且结构只有两种：map -> reduce或者map -> [map ->]* reduce [->map]*
+	  数据只能写磁盘，不能讲数据写到内存，方便后续的Job的数据处理
+    -3. Task的执行是以进程的方式启动的，所以在处理小规模数据集的时候比较慢
+
+Spark
+  基于内存的分布式计算框架
+  Spark是一个类似MapReduce的框架
+  起源：加州大学伯克利分校AMPLib实验室
+  官网：http://spark.apache.org/
+  官方博客：https://databricks.com/blog
+
+=========================================
+Spark编译
+  http://spark.apache.org/downloads.html
+  http://archive.apache.org/dist/spark/spark-1.6.1/
+  http://archive.apache.org/dist/spark/spark-1.6.1/spark-1.6.1.tgz
+  http://spark.apache.org/docs/1.6.1/building-spark.html
+
+./make-distribution.sh --tgz \
+	-Phadoop-2.4 \
+	-Dhadoop.version=2.5.0-cdh5.3.6 \
+	-Pyarn \
+	-Phive -Phive-thriftserver
+
+=====================================================
+Spark的运行方式/运行环境(Spark应用在哪儿运行)
+  -1. Local：本地运行，一般用于开发的测试
+  -2. Standalone：使用Spark自带的集群资源管理框架，将spark应用运行在standalone上
+  -3. Yarn：将spark应用运行在yarn上
+  -4. Mesos：将spark应用运行在mesos上；mesos是apache的一个顶级项目，是一个集群资源管理框架，比较类似Yarn，和yarn的区别主要是：支持更细力度的资源调度
+
+  
+=====================================================
+Spark Local运行环境配置
+  spark-shell命令行(spark on linux local)
+  配置过程：
+    -1. 安装好JAVA、SCALA、Hadoop等依赖环境
+	-2. 解压spark的编译好的压缩包
+	-3. 进入解压后的目录开始进行配置(/opt/cdh-5.3.6/spark)
+	-4. 修改配置文件
+	  mv conf/spark-env.sh.template conf/spark-env.sh
+	  vim conf/spark-env.sh
+JAVA_HOME=/opt/modules/java
+SCALA_HOME=/opt/modules/scala
+HADOOP_CONF_DIR=/opt/cdh-5.3.6/hadoop/etc/hadoop
+SPARK_LOCAL_IP=hadoop-senior01.ibeifeng.com
+###
+# HADOOP_CONF_DIR: 主要是给定spark应用程序连接hadoop相关服务的配置文件所在的文件夹路径是哪个，如果不给定，那么使用默认值
+# 该参数的作用其实就是将连接HDFS/YARN的相关配置文件添加到spark应用的classpath中，让spark应用可以连接上hdfs或者yarn
+    -5. 启动HDFS(配置了HADOOP_CONF_DIR)
+	  start-dfs.sh
+
+=====================================================
+Spark Local环境运行测试
+  -1. 进入spark根目录(/opt/cdh-5.3.6/spark)
+  -2. 执行bin文件夹中的案例
+    ./bin/run-example  SparkPi
+  -3. 启动spark-shell命令行进行测试
+    ./bin/spark-shell
+	To adjust logging level use sc.setLogLevel("INFO")
+	Spark context available as sc.
+	SQL context available as sqlContext.
+# 因为继承了HDFS，所以必须将README.md上传到HDFS平台上
+val textFile = sc.textFile("/README.md")
+textFile.count() 
+textFile.filter(line => line.contains("Spark")).count()    
+备注：可以通过webui查看执行结果信息，eg: http://hadoop-senior01:4040/jobs/
+
+=====================================================
+Spark Core WordCount案例代码讲解
+
+## 1. 读取数据形成一个RDD
+### path路径指定的是hdfs文件系统上的文件所在的路径，可以是相对路径，也可以是绝对路径
+val lines = sc.textFile("/beifeng/spark/data/word.txt")
+## 2. rdd的处理
+val result1 = lines
+  .flatMap(line => line.split(" "))
+  .map(word => word.toLowerCase())
+  .filter(word => word.nonEmpty)
+  .groupBy(word => word)
+  .map(t => {
+   val word = t._1
+   val iter = t._2
+   val wordcount = iter.size
+   (word, wordcount)
+  })
+## groupBy的底层其实就是groupByKey
+## 因为groupByKey API底层实现原理的问题，到底会将所有数据加载到内存，有可能会产生OOM或者内存溢出；并且groupByKey API不支持combiner局部数据聚合，所以对于聚合类型的应用，推荐使用reduceByKey或者aggregateByKey
+## groupByKey含义：将所有相同key的value数据放到一起形成一个迭代器
+## reduceByKey含义：将所有相同key的对应value传入给定的聚合函数进行数据聚合操作，并且得到一个最终聚合值
+## reduceByKey和aggregateByKey会做一个combiner的局部数据聚合，所以性能比groupByKey高
+val result2 = lines
+  .flatMap(line => line.split(" "))
+  .map(word => word.toLowerCase())
+  .filter(word => word.nonEmpty)
+  .map(word => (word,1))
+  .reduceByKey((a,b) => a + b)
+
+## 3. 结果输出
+### 输出到spark-shell控制台
+result1.collect
+result2.collect
+### 输出到外部的存储系统(HDFS)《要求hdfs文件夹不存在》
+result2.saveAsTextFile("/beifeng/spark/core/wc/01")
+
+
+=====================================================
+Spark Core TopN案例代码讲解 ==> 获取出现次数最多的前5个结果数据
+val wordCountRDD = result2.filter(t => t._2 > 2)
+wordCountRDD.map(t => (-t._2, t)).sortByKey().take(5).map(t => t._2)
+wordCountRDD.map(t => (t._2, t._1)).sortByKey(ascending = false).take(5)
+## MapReduce中TopN的实现思路
+思路：
+  -1. 每个MapTask仅仅输出当前Task处理的最大的前N个的值
+  -2. 只有一个ReduceTask，Reduce将所有的MapTask数据获取到后，采用和MapTask一样的策略，仅仅输出最大的前N个值
+伪代码：
+  MapTask
+    在内存中维护一个集合(map, 有边界的有权重的队列)
+	map:
+	  input: line
+	  String word = line.split(" ")[0] // word一定只会出现一次
+	  int count = Integer.valueOf(line.split(" ")[1])
+	  // 判断单词word出现的次数count在map集合中排第几位
+	  // 如果count比map中的某个值大，那么将word->count取代map中的最小值
+	  if (map.size < N) {
+		// 因为还没有获取到N个值，直接添加
+	    map.put(word, count)
+	  } else {
+	    // 已经获取到N个值，那么就考虑是否需要取代
+		String minWord = word;
+	    int minCount = count;
+	    for(Map.Entry<String,Integer> entry : map) {
+	      if (entry.getValue() < minCount) {
+		    minWord = entry.getKey()
+		    minCount = entry.getValue()
+		  }
+	    }
+	  
+	    if (word.equals(minWord)) {
+	      // 表示当前的word是最小值，不需要进行处理操作
+	    } else {
+	      // 表示当前的word比map中的某个值要大，所以删除更新
+		  map.remove(minWord);
+		  map.put(word, count)
+	    }
+	  }
+	  
+	  
+	clean:
+	  for(Map.Entry<String,Integer> entry : map) {
+	    if (entry.getValue() < minCount) {
+		  context.write(entry.getKey, entry.getValue)
+		}
+	  }
+  ReduceTask
+    基本一样
+#### 基于MapReduce的TopN的实现方式，SparkCore中实现的话可以考虑使用mapPartitions API
+## top函数内部基于Ordering排序器进行数据获取，获取值最大的前N个
+wordCountRDD.map(t => t.swap).top(5)
+### TODO: 能不能不进行map的key/value转换的，直接使用top函数获取value最大的前N个的值??
+
+=========================================================
+作业：
+  1. 自己理一下top函数的内部实现(先单个分区的数据进行topn获取，然后所有分区topn结果合并再获取一次)
+  2. 思考一下
+    Spark/MapReduce中的TopN程序的实现代码??
+	   N比较小怎么实现
+	   N比较大怎么实现（数据比较大，直接输出到HDFS，内存中放不下）
+  3. 搭建一个Spark的Local开发环境
+  4. 将Spark的源码导入IDEA中
+  5. 把WordCount程序好好的理理
+  6. 结合WordCount和TopN的程序对RDD、PairRDDFunctions、OrderedRDDFunctions这三个类的API进行整理和尝试的使用(只需要你理解返回值为RDD的API)
+     -a. 看注释 => 理解功能
+	 -b. 小数据测试 => 理解功能
+	 -c. 思考/整理一下该API的作用是什么
+	至少：map、mapPartitions、flatMap、filter、groupByKey、sortByKey、reduceByKey
+
+=============================================================
+额外作业：
+  -1. 把你们所有的MapReduce/Hive实现的案例使用SparkCore实现一次
+  -2. 解析20151220.log文件的内容(参考资料中)<是赠送课程中驴妈妈项目的那个数据>
+114.92.217.149^A1450569601.351^A/BEIfeng.gif?u_nu=1&u_sd=6D4F89C0-E17B-45D0-BFE0-059644C1878D&c_time=1450569596991&ver=1&en=e_l&pl=website&sdk=js&b_rst=1440*900&u_ud=4B16B8BB-D6AA-4118-87F8-C58680D22657&b_iev=Mozilla%2F5.0%20(Windows%20NT%205.1)%20AppleWebKit%2F537.36%20(KHTML%2C%20like%20Gecko)%20Chrome%2F45.0.2454.101%20Safari%2F537.36&l=zh-CN&bf_sid=33cbf257-3b11-4abd-ac70-c5fc47afb797_11177014
+111.68.118.241^A1450569601.510^A/BEIfeng.gif?ver=1&en=e_pv&pl=website&sdk=js&b_rst=375*667&u_ud=A8199FE1-7C42-48F3-BE5D-7B0BE4D7AE9D&b_iev=Mozilla%2F5.0%20(iPhone%3B%20CPU%20iPhone%20OS%209_2%20like%20Mac%20OS%20X%3B%20zh-CN)%20AppleWebKit%2F537.51.1%20(KHTML%2C%20like%20Gecko)%20Mobile%2F13C75%20UCBrowser%2F10.7.5.650%20Mobile&l=zh-cn&bf_sid=ab17fe6a-6d87-4c8a-9afd-75278db1e960_13938681&u_sd=BB6AC0C1-D69C-4407-9232-AC1C187CB26A&c_time=1450569600394&ht=www.beifeng.com&p_ref=http%253A%252F%252Fm.baidu.com%252Ffrom%253D0%252Fbd_page_type%253D1%252Fssid%253D0%252Fuid%253D0%252Fpu%253Dusm%2525400%25252Csz%2525401320_2003%25252Cta%252540iphone_1_9.2_1_10.7%252Fbaiduid%253DF0CAFDFFE1E4C626ADB8E6DD12FA1651%252Fw%253D0_10_%2525E8%2525B6%25258A%2525E5%25258D%252597%2525E5%2525B2%252598%2525E6%2525B8%2525AF%2525E6%252597%252585%2525E6%2525B8%2525B8%2525E6%252594%2525BB%2525E7%252595%2525A5%252Ft%253Diphone%252Fl%253D3%252Ftc%253Fref%253Dwww_iphone%2526lid%253D18410632830785241142%2526order%253D1%2526vit%253Dosres%2526tj%253Dwww_normal_1_0_10_title%2526m%253D8%2526srd%253D1%2526cltj%253Dcloud_title%2526dict%253D30%2526nt%253Dwnor%2526title%253D%2525E8%2525B6%25258A%2525E5%25258D%252597%2525E5%2525B2%252598%2525E6%2525B8%2525AF%2525E4%2525BA%252594%2525E5%2525A4%2525A9%2525E4%2525B8%252589%2525E6%252599%25259A%2525E5%25258D%25258A%2525E8%252587%2525AA%2525E5%25258A%2525A9%2525E6%2525B8%2525B8%2525E8%2525AE%2525B0_%2525E8%2525B6%25258A%2525E5%25258D%252597%2525E5%2525B2%252598%2525E6%2525B8%2525AF%2525E4%2525BA%252594%2525E5%2525A4%2525A9_%2525E9%2525A9%2525B4%2525E5%2525A6%252588%2525E5%2525A6%252588...%2526sec%253D8735%2526di%253D05466676ec59f198%2526bdenc%253D1%2526tch%253D124.0.0.0.0.0%2526nsrc%253DIlPT2AEptyoA_yixCFOxXnANedT62v3IEQGG_yJC0zeznI39h47aUbBmVCb5RTrIBU0gvWK0xBt8wnSa0Hkm9RF4w_tjsG9m7G36s_Go%2526eqid%253Dff7fb50411194000100000035675ef6b%2526wd%253D&tt=%E8%B6%8A%E5%8D%97%E5%B2%98%E6%B8%AF%E4%BA%94%E5%A4%A9%E4%B8%89%E6%99%9A%E5%8D%8A%E8%87%AA%E5%8A%A9%E6%B8%B8%E8%AE%B0_%E8%B6%8A%E5%8D%97%20%E5%B2%98%E6%B8%AF%20%E4%BA%94%E5%A4%A9_%E9%A9%B4%E5%A6%88%E5%A6%88%E8%B6%8A%E5%8D%97%E6%B8%B8%E8%AE%B0%E6%94%BB%E7%95%A5&p_url=http%3A%2F%2Fwww.beifeng.com%2Flvyou%2Fguide%2F2013-0814-173593.html
+    数据的分隔符号：^A
+	数据格式：IP地址^A服务器时间字符串^A请求参数(行为数据)
+	字段：
+	  en: 数据类型
+	    e_l: 这种数据表示用户第一个访问系统
+		e_pv: 这种数据表示用户的浏览行为
+	  u_ud: 用户唯一标识符，一个标识符就表示一个用户，一个用户也就只有一个标识符
+	  u_sd: 会话唯一标识符，一个id就表示一个会话，在一个会话中可以有多条数据; 会话：一个访问者从进入网站开始，到离开网络这一段时间就是一个会话
+	  p_url: 当前页面的url
+	  p_ref: 上一个页面的url
+	  备注：url是经过urlencode编码的
+	  备注：url不是必须字段
+    -a. ETL操作(在学SparkSQL前不考虑)
+	-b. 统计指标的计算
+	  --1. 统计会话长度、会话数量、无效会话的数量(会话长度小于1秒)
+	  --2. 统计每天、每周(每周第一天是周日)、每月的新增的访客数量
+	  --3. 统计每天每个小时段的访客数量(新 + 旧)
+	  --4. 计算各个页面的跳转率(基于会话计算，如果一个会话中有多次访问就计算多次)
+	    比如：进入A页面的次数是100次，从A到B有20次，A到C有50次，A到D有10次，那么最终的一个数据如下：
+		  A -> B 20% 内部跳转
+		  A -> C 50% 内部跳转
+		  A -> D 10% 内部跳转
+		  A -> null 20% 跳出
+
+http://www.yeefx.cn/demo.show.php?website=10000006&server=s1&menuid=1&menuidarr=
+
+
+
+

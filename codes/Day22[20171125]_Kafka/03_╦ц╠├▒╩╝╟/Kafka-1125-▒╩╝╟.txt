@@ -1,0 +1,117 @@
+Kafka
+===========================================
+版本：0.8.2.1
+官网：http://kafka.apache.org/
+文档：http://kafka.apache.org/082/documentation.html
+
+==========================================
+Kafka安装
+  备注：server.properties文件的参数详见http://kafka.apache.org/082/documentation.html#brokerconfigs
+  -1. 前提：所有机器必须安装好java、scala、zookeeper的环境
+  -2. 安装kafka(伪分布式的)
+    --1. 下载Kafka
+	  http://archive.apache.org/dist/kafka/0.8.2.1/
+	  http://archive.apache.org/dist/kafka/0.8.2.1/kafka_2.10-0.8.2.1.tgz
+	--2. 解压
+	  cd /opt/cdh-5.3.6/
+	  tar -zxvf /opt/softwares/kafka_2.10-0.8.2.1.tgz 
+	  mv kafka_2.10-0.8.2.1/ kafka
+	  cd kafka
+    --3. 修改配置文件(内容见ppt)
+	  mv config/server.properties config/server0.properties 
+	  cp config/server0.properties config/server1.properties  
+	  cp config/server0.properties config/server2.properties  
+	  cp config/server0.properties config/server3.properties  
+### 这五个值，在不用的server.properties文件中有可能是不同的
+broker.id=0 ## 给定kafka的broker服务的唯一id，而且是非负数
+port=9092 ## 每个kafka的broker服务监听的端口号，要求端口号没有被占用，默认9092
+host.name=hadoop-senior01.ibeifeng.com ## 每个kafka的broker服务监听主机名
+log.dirs=/opt/cdh-5.3.6/kafka/data/0 ## 给定当前kafka的broker服务存储数据的本地磁盘路径，可以给定多个，使用逗号分隔
+zookeeper.connect=hadoop-senior01.ibeifeng.com:2181/o2o17 ## 给定zk的连接信息/元数据的存储位置
+    --4. 完全分布式安装
+	  将伪分布式搭建好的kafkacopy到其它机器上，修改server.properties文件中的broker.id的参数值，改成唯一id即可(前提：分布式环境中的所有机器之间的主机名和IP地址的映射完成)
+    --5. 启动服务
+	  首先启动zk的服务
+	    bin/zkServer.sh start
+	  启动kafka服务
+	    bin/kafka-server-start.sh -daemon config/server0.properties 
+		bin/kafka-server-start.sh -daemon config/server1.properties 
+		bin/kafka-server-start.sh -daemon config/server2.properties 
+		bin/kafka-server-start.sh -daemon config/server3.properties 
+   --6. 关闭服务（会关闭当前机器上的所有kafka的进程的）
+      bin/kafka-server-stop.sh
+
+==========================================
+Kafka基本命令讲解
+   http://kafka.apache.org/082/documentation.html#quickstart
+
+-0. 启动服务
+bin/kafka-server-start.sh -daemon config/server0.properties 
+bin/kafka-server-start.sh -daemon config/server1.properties 
+bin/kafka-server-start.sh -daemon config/server2.properties 
+bin/kafka-server-start.sh -daemon config/server3.properties 
+
+-1. 查看topic支持的操作
+./bin/kafka-topics.sh 
+Create, delete, describe, or change a topic.
+
+注意事项：
+  --1. 一般应用中，一个topic的分区数目为broker服务数目的1~2倍（可以提供一个比较好的分布式性能）
+  --2. 一般应用中，一个分区的副本数最好不要超过3，另外不能大于broker的数量(副本的数量值需要在可靠性和性能之间进行均衡)
+  --3. 一般工作中，一个topic一经创建，一般不会做任何的修改/删除操作
+
+-2. 创建Topic: --create
+./bin/kafka-topics.sh --create --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng0 --partitions 2 --replication-factor 2
+./bin/kafka-topics.sh --create --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng1 --partitions 5 --replication-factor 2
+./bin/kafka-topics.sh --create --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng2 --partitions 1 --replication-factor 5 ==> 会执行失败，原因是：分区的副本数量大于存活的broker服务的数量； replication factor: 5 larger than available brokers: 4
+
+-3. 列出topic：--list
+./bin/kafka-topics.sh --list --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17
+
+-4. 查看topic的信息: --describe
+./bin/kafka-topics.sh --describe --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17
+./bin/kafka-topics.sh --describe --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng0
+
+-5. 修改topic: --alter(只允许修改topic的配置信息以及增加分区的数量)
+./bin/kafka-topics.sh --alter --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng1 --config max.message.bytes=102400
+./bin/kafka-topics.sh --alter --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng1 --delete-config max.message.bytes 
+./bin/kafka-topics.sh --alter --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng1 --partitions 10
+
+-6. 删除topic: --delete
+默认情况下，该删除操作是标记操作，不会实际删除topic
+./bin/kafka-topics.sh --delete --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng1
+物理删除
+  方式一：
+    执行删除命令
+	然后手动删除zk和磁盘上的所有该topic相关的数据
+  方式二：
+    在server.properties文件中添加一个配置项: delete.topic.enable, 并且将值设置为true；然后重启kafka的服务
+
+==========================================
+Kafka自带生产者消费者测试
+  启动生产者
+    bin/kafka-console-producer.sh --broker-list hadoop-senior01.ibeifeng.com:9092,hadoop-senior01.ibeifeng.com:9093,hadoop-senior01.ibeifeng.com:9094,hadoop-senior01.ibeifeng.com:9095 --topic beifeng0
+  启动消费者
+    bin/kafka-console-consumer.sh --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng0
+	bin/kafka-console-consumer.sh --zookeeper hadoop-senior01.ibeifeng.com:2181/o2o17 --topic beifeng0 --from-beginning
+
+==========================================
+Kafka内部机制讲解
+  offset偏移量
+    -1. 在每个Topic的每个Partition中，存储数据的时候，会给每一条数据存储一个当前消息在当前Partition中的偏移量(该值从0开始递增，类型为Long)；这里的这个偏移量的含义是指当前消息在当前分区中是第几条消息；offset是由kafka的broker服务产生，会随着数据保存到磁盘中，每个分区都维护自己的offset偏移量，分区与分区之间的offset偏移量是没有关系的
+	-2. 消费者在消费Topic的数据的时候，每个消费者会在zk&kafka中保存该对应topic的对应分区的消费数据量(eg: zk中看到的consumer offset偏移量的值就是表示该消费者在对应分区上消费了多少数据 ===> 实际含义是指当前消费者在对应分区上消费的下一条数据的offset偏移量的值)
+  Consumer Group
+    当多个Consumer的group.id参数值一致的情况下，这些consumer属于同一组；同一组的consumer共享一个consumer offset偏移量信息
+	对于一组Consumer Group中的所有Consumer而言，一条kafka的消息只会发送给其中的某一个Consumer进行消费
+	为了保证每个分区数据处理的有序性，kafka中，每个分区的数据只能由一个Consumer Group中的一个Consumer消费；但是可以被多个Consumer Group消费
+	在Consumer Group中，如果Consumer的数量小于需要消费的topic的分区数量，那么一个consumer有可能消费多个分区的数据；如果大于topic的分区数量，那么有可能存在consumer不消费数据的情况；这样的机制是一个动态调整的，根据consumer group中的consumer数量和topic的分区数量的变化情况进行调整
+
+=========================================================
+Kafka Producer API
+ 文档：
+  http://kafka.apache.org/082/documentation.html#producerapi
+  http://kafka.apache.org/082/documentation.html#producerconfigs
+  http://kafka.apache.org/082/documentation.html#theproducer
+  http://kafka.apache.org/082/documentation.html#apidesign
+
+

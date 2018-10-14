@@ -1,0 +1,289 @@
+SparkStreaming
+==========================================
+框架的类型
+  -1. 批处理的计算框架(MapReduce\Spark)
+  -2. SQL的交互式处理框架(Hive\Spark\Impala)
+  -3. 实时处理框架(Spark\Storm)
+  -4. 流数据处理框架(Storm\SparkStreaming)
+
+数据延迟性：
+  从数据到达storm或者sparkstreaming应用程序中，到数据处理完成的间隔时间叫做数据的延迟性。
+
+Storm/JStorm:
+  完全实时的流数据处理平台
+  来一条数据就处理一条数据；在高并发、大数据量的情况下，对机器性能的要求比较高，如果机器配置比较低的话，可能会导致一个比较大的数据延迟性
+
+SparkStreaming:
+  准实时/微观操作的流式数据处理平台
+  Streaming是按照一个一个的批次进行数据处理的，只有当上一个批次执行完成后，当前批次才会开始执行，否则当前批次会处理阻塞状态。至于每个批次的产生间隔时间，是由代码/程序给定的，当给定一个时间间隔后，每隔这个间隔时间就会产生一个批次，产生的批次处理的数据就是这个批次间隔时间内接受到的所有数据；批次的产生和批次的执行时没有关系的
+  相对于Storm来讲：
+    优点：机器要求相对比较低，spark的生态圈相比比较完善(sql、mllib...)
+	缺点：在大数据的情况下，streaming的延迟性比storm高
+	
+SparkStreaming的处理流程：
+  -1. 读取数据形成DStream
+    读取外部数据源的数据然后形成DStream，eg: kafka、flume....
+  -2. 数据的处理
+    调用DStream的API进行处理(DStream的API和RDD的API有八成相似)
+  -3. 结果数据输出
+    --1. 调用DStream的相关API进行数据输出
+	--2. 将DStream转换为RDD后，对RDD的数据进行数据输出
+	数据保存的外部存储系统一般有：
+	  --a. Redis、MongoDB
+	  --b. RDBMs
+	  --c. HBase、Hive、HDFS
+	  --d. Kafka
+sparkstreaming的应用结构：
+  [flume/kafka的生产者 ->] kafka -> streaming/storm -> redis/rdbms/kafka -> ...	
+
+流式数据处理的应用场景(一般情况下，实时的业务都是比较简单的)
+  -1. 基本的指标的计算
+    实时的订单数量
+	实时的各个品类的订单数量
+	实时的各个地域的订单数量
+	......
+  -2. 异常用户统计/黑名单用户统计/黄牛用户统计.....
+  -3. 对实时的数据进行预测(直接调用算法模型根据实时的输入值，返回/输出一个算法模型的结果值)
+
+===============================================
+SparkCore
+  程序入口：SparkContext
+  核心抽象：RDD
+SparkSQL
+  程序入口：SQLContext/HiveContext
+  核心抽象：DataFrame
+SparkStreaming
+  程序入口：
+    StreamingContext
+	  SparkStreaming程序的上下文，依赖SparkContext对象
+	  在构建该对象的过程中，是需要需要Streaming程序的批次间隔时间的(batchDuration)， 也就是需要给定默认的DStream的batch生成间隔时间
+	  eg: val ssc = new StreamingContext(sc, Seconds(10))
+  核心抽象：
+    DStream
+	  SparkStreaming的核心抽象，所有的数据操作都是基于DStream的
+	  实质上DStream其实就是RDD+time时间的一个集合/组合
+	  RDD中80%的API在DStream中可以直接使用，而且功能和调用方式一模一样
+	  DStream中80%的API在RDD中是存在的，但是有一些特殊的API：transform、updateStateByKey.....
+
+==============================================
+SparkStreaming WordCount
+  前提：启动hdfs服务及hive的相关元数据服务(如果sparksql集成了hive)
+  nc -lk 9999
+  ## 因为默认需要启动一个数据接收器的task任务，所以要求启动的spark应用(spark-shell)至少可以并行运行两个task(一个数据接收器的task任务+至少一个的数据处理的task任务)
+  bin/spark-shell --master local[2]
+
+import org.apache.spark.streaming.dstream.DStream
+import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.apache.spark.{SparkConf, SparkContext}
+
+val ssc = new StreamingContext(sc, Seconds(10))
+val dstream: DStream[String] = ssc.socketTextStream("hadoop-senior01.ibeifeng.com", 9999)
+val result: DStream[(String, Int)] = dstream.flatMap(line => line.split(" ")).map(word => (word, 1)).filter(t => t._1.nonEmpty).reduceByKey((a, b) => a + b)
+result.print()
+result.saveAsTextFiles(prefix = "/beifeng/streaming/wc", suffix = "batch")
+ssc.start() 
+ssc.awaitTermination()
+
+===========================================
+SparkStreaming的程序运行原理
+  -1. 使用数据接收器
+    -a. 数据接收器(receiver)
+	  Receiver会接收数据的输入，并将输入的数据以数据块(Block)的形式存储于内存或者磁盘中(是由SparkEnv中的BlockManager对象进行管理，Receiver Task会将Block块的信息汇报给Driver)
+	  默认情况下，每隔200ms产生一个block块，在RDD执行的过程中，一个Block块就对应一个Task任务；间隔时间由参数spark.streaming.blockInterval决定
+	  一般情况下设置为1~2s，一般值为: batchDuration / (executor num * (1 ~ cores pre executor))
+	-b. batch/批次/RDD的产生
+	  每隔batchDuration指定的时间间隔后，就产生一个待运行的批次，这里批次执行过程中处理的数据就是当前批次间隔时间内产生/接收到的所有Block块的数据; 所以一般最好要求batchDuration是blockInterval的整数倍
+	  每个批次实质上就是产生待运行的RDD的DAG执行图(即RDD) ==> 每个批次都会产生一个RDD，而且不同批次之间产生的RDD只是处理的数据不同，但是数据的处理逻辑全部一样
+	  每个批次产生的RDD其实处理的数据就是Block块，每个Block块就相当于一个RDD的分区，所以RDD的task数量其实就是RDD处理的Block块的数据
+	  一个SparkStreaming程序中可以存在多个DStream对象 ===> 一个DStream的批次中，可以存在多个RDD（多个RDD之间是依赖关系）<==不同的==> 	  一个DStream对象中，一个批次一定只会产生一个RDD(只属于当前DStream、当前批次)
+	-c. batch的执行/批次对应的Job执行(RDD action类型算子的执行)
+	  一个output输出就是一个RDD的action类型算子的触发；一个output输出中，可能存在多个Job，每个Job其实都是调用了一次RDD的action类型算子
+	  batch的执行其实指的就是批次中产生的RDD的执行(对应action算子)
+	  一个批次中，可以存在多个output，一个output中可以存在多个RDD job
+	  RDD的执行其实就是对Block块的数据进行处理，然后将处理结果进行输出
+  -2. Direct Approach
+    -a. 批次/RDD的产生
+	  每个batchDuration指定的间隔后，产生一个待运行的批次，批次也就是RDD；产生的RDD会保存这个批次需要读取数据的相关信息(eg: 数据源位置、数据读取位置、读取的数据量....)
+	  Task数量/RDD的分区数量是有实现代码以及第三方的数据框架决定的
+	-b. 批次/RDD的执行
+	  RDD执行的时候会基于RDD的分区信息(相关数据的读取元数据信息)进行真正的数据读取操作，并且将数据进行处理，并将处理结果进行输出(shuffle/外部存储系统/driver)
+
+=======================================================
+DStream
+  DStream的底层是一系列的RDD和时间组成的一个集合，每个RDD包含对应批次的数据
+  DStream API的底层实质上是调用RDD的API
+* DStreams internally is characterized by a few basic properties:
+*  - A list of other DStreams that the DStream depends on
+  DStream具有和RDD一样的依赖关系，除了第一个创建的Input DStream外，其它通过DStream API构建出来的DStream均存在父DStream
+*  - A time interval at which the DStream generates an RDD
+  DStream会间隔性的产生RDD，间隔大小默认为构建StreamingContext时候给定的batchDuration的值，实际上，间隔大小是有DStream的slideDuration方法决定的
+  子DStream产生批次的间隔时间默认情况下是和父DStream产生批次的间隔时间一致的，但是对于window类型的DStream，子DStream的批次间隔时间是父DStream的批次间隔时间的整数倍
+*  - A function that is used to generate an RDD after each time interval
+  有一个方法专门用于产生对应的RDD: compute
+注意：其实在DStream调用数据处理API的时候(非输出API), 内部其实是在构建DStream的依赖关系/DAG图
+
+RDD的销毁
+  默认情况下，在下下一个批次执行完成的时候，会将当前批次对应的RDD以及RDD处理的Block块数据进行删除操作
+  删除的前提：可能被删除的RDD或者Block块已经执行了或者数据已经被处理过了，而且没有任何其它的RDD需要依赖这些RDD的情况下
+  可以通过StreamingContext的API进行RDD/Block块生命周期的更改
+    sc.remember(Seconds(60)) => 要求给定的时间必须比原来的批次产生间隔时间大
+备注：在实际工作中，记住需要配置一个参数: spark.cleaner.ttl，默认为空，最好给定删除元数据的间隔时间，eg: spark.cleaner.ttl=1d
+
+===================================================
+SparkStreaming的数据读取(形成DStream的数据源)
+  -1. Basic Source
+    基于StreamingContext的API读取数据形成的DStream就叫做Basic Source；
+	一般情况下都是基于数据接收器方式进行数据读取操作的
+	常用的API：
+	  socketTextStream: 读取tcp端口数据，以文本的形式读取数据
+	  receiverStream：使用自定义的数据接收器来构建DStream
+  -2. Advanced Source
+    基于外部数据的API读取数据(非Streaming模块的API，非StreamingContext API)
+	比如：Kafka、Flume.....
+	一般情况下有两种数据读取方式，分别是：
+	  --1. Use Receiver
+	  --2. Direct Approach
+
+SparkStreaming数据读取方式
+  -1. Use Receiver
+    在正常的Job task之外，存在一个专门用于数据接收的task任务，并将task接收到的数据以Block的形式存在在应用的Executor的内存或者磁盘中，在这种情况下，DStream产生的RDD底层存储的其实是Block块的id，RDD执行过程中，会使用BlockManager基于存储的Block块id获取Block的对应数据(这里的RDD指的是第一个RDD<数据读取的那个RDD>)
+	RDD执行过程中(第一个Stage阶段)，一个Block块就对应一个Task， RDD的分区数量其实就是对应Block块的数量
+  -2. Direct Approach(直接数据读取方式)
+    不会启动Receiver Task，也就是不会产生Block块
+	StreamingContext在形成RDD的时候，在RDD中存储的是数据的存储位置信息以及相关数据的读取参数/元数据信息；然后在RDD执行过程中，直接远程从数据源基于RDD中存储的元数据进行数据的读取操作，并将读取得到的数据在Streaming应用程序中进行处理操作 ===> 数据不形成Block块，也就是不会在executor中保存Block块
+	RDD执行过程中(第一个Stage阶段)，RDD的分区数量有具体的实现代码决定(数据源类型 + DirectDStream的代码)
+    
+==========================================================
+SparkStreaming和Kafka的集成方式
+  http://spark.apache.org/docs/1.6.1/streaming-kafka-integration.html
+  集成方式：
+    -1. Approach 1: Receiver-based Approach
+	  从Kafka到SparkStreaming程序的数据发送方式为：push
+	  基于数据接收器的方式进行集成
+	  底层使用Kafka的High Level Consumer API进行数据的接收，所以是基于Kafka的Consumer Configuration配置参数实现的一个内容控制(eg: 数据读取、offset管理...)
+	  默认情况下，Consumer的offset偏移量会自动提交到zookeeper上进行管理
+	  每个批次产生的RDD的分区其实是对应批次中Block块的数量
+	-2. Approach 2: Direct Approach (No Receivers)
+	  从Kafka到SparkStreaming程序的数据发送方式为：pull
+	  基于直接的数据读取方式来获取数据
+	  底层使用Kafka的Simple Conusmer API进行数据的获取操作
+	  需要在代码中给定具体的数据读取以及offset相关的元信息
+	  在RDD形成的时候，RDD中存储的是读取Kafka分区数据的元信息, eg: Kafka的位置、topic名称、分区id以及偏移量信息；只有到rdd运行的时候，才会真正的从kafka获取数据
+	  每个批次产生的RDD的分区数目对应Kafka的Topic的分区数目，也就是一个Kafka的Toopic的分区对应一个RDD分区
+	  所以在每个RDD的分区中，分区数据有序(和kafka分区数据有序是同样的一个特性) ==> 前提：RDD在处理过程中，没有经过shuffle操作(没有经过shuffle之前，数据一定是有序的)
+
+===================================================
+SparkStreaming和Kafka的集成的代码实现
+  -1. pom.xml中添加依赖包
+<dependency>
+	<groupId>org.apache.spark</groupId>
+	<artifactId>spark-streaming-kafka_2.10</artifactId>
+	<version>${spark.version}</version>
+	<scope>compile</scope>
+</dependency>
+  -2. 根据不同的集成方式采用不同的策略进行代码实现
+     --a. Use Receiver
+def createStream[K: ClassTag, V: ClassTag, U <: Decoder[_]: ClassTag, T <: Decoder[_]: ClassTag](
+      ssc: StreamingContext, // 上下文
+      kafkaParams: Map[String, String], // Kafka的consumer的配置参数
+      topics: Map[String, Int], // 指定读取那个topic的数据，以及该topic使用几个KafkaStream流进行数据读取
+      storageLevel: StorageLevel // 指定Block块的缓存级别
+    ): ReceiverInputDStream[(K, V)]
+	 
+	 --b. Direct Approach
+def createDirectStream[
+    K: ClassTag,
+    V: ClassTag,
+    KD <: Decoder[K]: ClassTag,
+    VD <: Decoder[V]: ClassTag] (
+      ssc: StreamingContext, // 上下文
+      kafkaParams: Map[String, String], // kafka连接的consumer参数，只支持两个参数: metadata.broker.list和auto.offset.reset
+      topics: Set[String] // 给定消费那些topic的数据，topic名称构成的一个集合
+  ): InputDStream[(K, V)]
+def createDirectStream[
+    K: ClassTag,
+    V: ClassTag,
+    KD <: Decoder[K]: ClassTag,
+    VD <: Decoder[V]: ClassTag,
+    R: ClassTag] (
+      ssc: StreamingContext, // 上下文
+      kafkaParams: Map[String, String], // kafka的连接参数，只支持一个参数: metadata.broker.list
+      fromOffsets: Map[TopicAndPartition, Long], // 指定从那个topic的那个分区的那个偏移量开始读取数据
+      messageHandler: MessageAndMetadata[K, V] => R // 给定一个数据处理的函数
+  ): InputDStream[R]
+
+
+==============================================
+SparkStreaming和Kafka集成的优化方式
+  备注：所有SparkCore中介绍的优化方式在这里均可以进行优化操作
+  spark.streaming.kafka.maxRetries：给定连接kafka的时候最大的失败重试次数，默认为1次
+  -1. Use Reciever
+    -a. 将参数spark.streaming.blockInterval参数进行优化调整
+	-b. 考虑使用多个数据接收器，然后将形成的DStream进行union合并即可
+	  要求：
+	    要求合并的DStream的ssc对象是同一个
+		要求合并的DStream具有相同的批次间隔时间
+  -2. Direct Approach
+    -a. 可以考虑开启动态资源调度（动态的executor分配）
+	-b. 开启streaming和kafka的动态数据调整机制
+	   含义：限制每个批次最多允许处理的数据量
+	      spark.streaming.backpressure.enabled:false, 设置为true表示开启动态调整
+		  spark.streaming.kafka.maxRatePerPartition: 指定每个分区每个批次每秒最大的允许处理的数据条数，默认是不限制
+
+================================================
+SparkStreaming和Kafka集成后的应用恢复机制
+  ===> SparkStreaming和Kafka集成后，Consumer的offset偏移量如何管理??
+  备注：当streaming程序宕机，进行恢复操作后，可以继续接着上一次处理完的数据继续的进行处理
+  -1. Use Receiver
+    -a. 只能基于kafka所提供的offset管理机制，自动的将offset偏移量提交到zookeeper集群中 ===> 只能更改自动提交的间隔时间参数  ===> 如果说偏移量提交到zk中，那么表示这个数据已经被数据接收器接收了
+	-b. block块的恢复
+	  可以考虑在写成Block块之间，写入一个WAL的日志；然后当需要恢复的时候，可以直接从日志中进行block块的恢复操作
+	  该机制是由参数: spark.streaming.receiver.writeAheadLog.enable决定的，默认为false，设置为true表示开启
+  -2. Direct Approach
+    -a. 可以利用messageHandler函数进行offset偏移量管理
+	-b. 利用SparkStreaming的HA机制
+	  DStream在构建RDD的过程中，将RDD的相关元数据写入到HDFS文件系统中(checkpoint文件夹)，当需要恢复的时候，直接从checkpoint文件夹中进行数据恢复即可
+
+SparkStreaming HA机制：
+  spark streaming提供的一种元数据恢复机制，通过将计算过程中涉及到的批次信息、对应的RDD的相关信息进行保存到HDFS文件夹中，然后当Streaming程序宕机恢复的时候，可以直接从这个文件夹中进行恢复操作 ===> 要求：宕机之前和恢复之后的SparkStreaming程序的执行DAG图完全一样
+
+================================================
+DStream API讲解
+  -1. map、filter、flatMap、reduceByKey、repartition、groupByKey、...
+    应用方式以及执行原理和RDD对应的API一模一样
+	有一些API，比如：join类型的，要求两个DStream的ssc和批次产生间隔时间必须是一致的
+  -2. 当需要使用广播变量的时候，必须将广播变量设置为单例模式
+    http://spark.apache.org/docs/1.6.1/streaming-programming-guide.html#accumulators-and-broadcast-variables
+  -3. transform
+    直接将DStream的操作转换为RDD的数据操作，通过该API可以得到DStream的最终结果值，内部其实是一个RDD的转换操作
+	注意：不管是什么类型的DStream，一个批次一定只有一个RDD ==> 在使用该API的时候，不需要考虑什么RDD的合并
+  -4. 数据输出的相关API
+    --a. 直接调用foreachRDD API将DStream的数据输出转换为RDD的数据输出
+	  foreachRDD和transform API基本类似，区别：foreachRDD会触发job的执行以及该API没有返回值的
+	--b. 直接调用DStream的输出类型的API
+	  dstream.saveAsTextFiles
+	  dstream.print
+	  ====> 底层都是调用foreachRDD类型的API，将数据转换为RDD输出
+  -5. updateStateByKey
+    updateStateByKey一般情况下需要和Streaming HA机制一起使用
+	应用场景：需要对数据进行累加统计的情况
+	执行原理：每个批次执行完成后，会将当前批次的状态信息(key/stage)保存到checkpoint文件夹上，当下一个批次执行的时候，会聚合当前批次的状态信息；聚合的方式使用给定的函数进行聚合
+	注意：
+	  -1. 使用updateStateByKey API的时候，状态信息是保存到checkpoint文件夹中的，所以必须给定checkpoint文件夹路径
+	  -2. 在使用该API的时候，最好先使用聚合类型的API按照key进行一次聚合
+  -6. xxxxxWindow
+    reduceByKeyAndWindow：功能是将最近几个批次的结果合并到一起
+	应用场景：计算最近一段时间的数据
+	xxxxxWindow一般情况下也需要给定checkpoint文件夹(有的api是不需要的)
+  
+  
+===============================================
+SparkStreaming总结
+  -1. DStream理解以及SparkStreaming程序的执行流程(使用数据接收器的形式)
+  -2. SparkStreaming和Kafka集成的方式、优化的方式、offset管理方式(恢复的机制)
+  -3. DStream的相关API：transform、foreachRDD、updateStateByKey、xxxxWindow
+  -4. 应用场景
+    -a. 实时统计/处理 ==> 一个批次统计一次 ==> 基本的API
+	-b. 累加统计 ==> updateStateByKey
+	-c. 计算最近一段时间内的数据的一个统计 ==> xxxWindow
+

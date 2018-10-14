@@ -1,0 +1,73 @@
+CREATE  TABLE `dept`(
+  `deptno` int, 
+  `dname` string, 
+  `loc` string)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY '\t';
+  
+CREATE  TABLE `emp`(
+  `empno` int, 
+  `ename` string, 
+  `job` string, 
+  `mgr` int, 
+  `hiredate` string, 
+  `sal` double, 
+  `comm` double, 
+  `deptno` int)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY '\t' ;
+  
+CREATE  TABLE `track_log`(
+  `id` string, 
+  `url` string, 
+  `referer` string, 
+  `keyword` string, 
+  `type` string, 
+  `guid` string, 
+  `pageid` string, 
+  `moduleid` string, 
+  `linkid` string, 
+  `attachedinfo` string, 
+  `sessionid` string, 
+  `trackeru` string, 
+  `trackertype` string, 
+  `ip` string, 
+  `trackersrc` string, 
+  `cookie` string, 
+  `ordercode` string, 
+  `tracktime` string, 
+  `enduserid` string, 
+  `firstlink` string, 
+  `sessionviewno` string, 
+  `productid` string, 
+  `curmerchantid` string, 
+  `provinceid` string, 
+  `cityid` string, 
+  `fee` string, 
+  `edmactivity` string, 
+  `edmemail` string, 
+  `edmjobid` string, 
+  `ieversion` string, 
+  `platform` string, 
+  `internalkeyword` string, 
+  `resultsum` string, 
+  `currentpage` string, 
+  `linkposition` string, 
+  `buttonposition` string)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY '\t' ;
+  
+CREATE  TABLE `page_views`(
+  `track_time` string, 
+  `url` string, 
+  `session_id` string, 
+  `referer` string, 
+  `ip` string, 
+  `end_user_id` string, 
+  `city_id` string)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY '\t';
+  
+==============
+// 加载数据
+LOAD DATA LOCAL INPATH '/home/beifeng/xxx' OVERWRITE INTO TABLE yyyy;

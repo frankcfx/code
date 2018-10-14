@@ -1,0 +1,282 @@
+SparkSQL
+===============================================
+Spark on Hive(SparkSQL): sparksql集成hive，支持直接从hive读取数据==> 实质上就是读取hive的metastore元数据，然后根据元数据进行数据处理；一个spark应用中可以执行多条hql语句
+Hive on Spark: 实质上是将hql语句转换为sparkcore的代码(rdd)进行数据处理；一条HQL语句转换成为一个spark应用
+SparkSQL应用程序和Hive集成的方式(基于SparkSQL的应用程序当需要集成hive的时候进行的操作 ==> 实质上就是需要使用Hive的元数据)
+  什么时候需要集成hive????
+    当spark应用程序需要访问hive表并且希望能够利用到hive的元数据的时候
+	或者spark中应用了hive的相关函数(eg: 窗口分析函数)
+  集成方式：
+    -1. 前提：Spark和HDFS的集成环境完成
+	-2. 启动hdfs
+	-3. spark的编译的时候支持hive和hive-thriftserver或者说将spark-sql和spark-sql-thriftserver模块的代码(jar)添加到项目中
+	-4. 将hive-site.xml添加到项目的classpath环境变量中
+	  将hive-site.xml文件复制到spark根目录的conf文件夹中
+	-5. 根据hive-site.xml文件的配置值进行不同的操作
+	   -a. 当hive.metastore.uris参数值为空(默认值情况下)
+	     直接将hive元数据库的连接驱动jar文件添加到项目的classpath中即可完成集成操作
+	   -b. 当hive.metastore.uris有值的情况下
+	     直接启动hive的metastore服务即可完成集成操作
+	   
+======================================================
+SparkSQL和Hive集成环境测试
+  -1. 前提：启动hdfs等相关服务完成sparksql和hive的集成
+  -2. 进行测试
+cd /opt/cdh-5.3.6/spark  
+bin/spark-sql
+spark-sql (default)> use common;
+spark-sql (default)> show tables;
+spark-sql (default)> select * from emp;
+spark-sql (default)> select * from emp a join dept b on a.deptno=b.deptno;
+spark-sql (default)> explain select * from emp a join dept b on a.deptno=b.deptno;
+spark-sql (default)> cache table emp;
+spark-sql (default)> select * from emp a join dept b on a.deptno=b.deptno;
+spark-sql (default)> uncache table emp;
+
+bin/spark-shell	   
+scala> sqlContext.sql("use common").show
+scala> sqlContext.sql("show tables").show
+scala> sqlContext.sql("select * from emp a join dept b on a.deptno=b.deptno").show
+scala> sqlContext.sql("explain select * from emp a join dept b on a.deptno=b.deptno").show(false)
+scala> sqlContext.sql("cache table emp").show
+scala> sqlContext.sql("uncache table emp").show
+scala> sqlContext.sql("create table test1(id int, name string)").show
+scala> sqlContext.sql("insert into table test1 select empno,ename from emp").show
+
+17/11/19 14:53:16 INFO hive.metastore: Connected to metastore.
+org.apache.hadoop.hive.ql.metadata.HiveException: Unable to alter table. Invalid method name: 'alter_table_with_cascade' ==> 这个异常的主要原因是：spark的底层默认是hive的1.2.1版本，但是我这里的hive的metastore版本为0.13，版本不兼容导致的；但是这个异常不影响数据的插入
+	   
+== Physical Plan ==
+Project [empno#40,ename#41,job#42,mgr#43,hiredate#44,sal#45,comm#46,deptno#47,deptno#48,dname#49,loc#50]
++- BroadcastHashJoin [deptno#47], [deptno#48], BuildRight
+   :- ConvertToUnsafe
+   :  +- HiveTableScan [empno#40,ename#41,job#42,mgr#43,hiredate#44,sal#45,comm#46,deptno#47], MetastoreRelation common, emp, Some(a)
+   +- ConvertToUnsafe
+      +- HiveTableScan [deptno#48,dname#49,loc#50], MetastoreRelation common, dept, Some(b)	   
+==========================================	   
+== Parsed Logical Plan ==
+Limit 21
++- Project [empno#143,ename#144,job#145,mgr#146,hiredate#147,sal#148,comm#149,deptno#150,deptno#151,dname#152,loc#153]
+   +- Join Inner, Some((deptno#150 = deptno#151))
+      :- MetastoreRelation common, emp, Some(a)
+      +- MetastoreRelation common, dept, Some(b)
+
+== Analyzed Logical Plan ==
+empno: int, ename: string, job: string, mgr: int, hiredate: string, sal: double, comm: double, deptno: int, deptno: int, dname: string, loc: string
+Limit 21
++- Project [empno#143,ename#144,job#145,mgr#146,hiredate#147,sal#148,comm#149,deptno#150,deptno#151,dname#152,loc#153]
+   +- Join Inner, Some((deptno#150 = deptno#151))
+      :- MetastoreRelation common, emp, Some(a)
+      +- MetastoreRelation common, dept, Some(b)
+
+== Optimized Logical Plan ==
+Limit 21
++- Project [empno#143,ename#144,job#145,mgr#146,hiredate#147,sal#148,comm#149,deptno#150,deptno#151,dname#152,loc#153]
+   +- Join Inner, Some((deptno#150 = deptno#151))
+      :- MetastoreRelation common, emp, Some(a)
+      +- MetastoreRelation common, dept, Some(b)
+
+== Physical Plan ==
+Limit 21
++- ConvertToSafe
+   +- Project [empno#143,ename#144,job#145,mgr#146,hiredate#147,sal#148,comm#149,deptno#150,deptno#151,dname#152,loc#153]
+      +- BroadcastHashJoin [deptno#150], [deptno#151], BuildRight
+         :- ConvertToUnsafe
+         :  +- HiveTableScan [empno#143,ename#144,job#145,mgr#146,hiredate#147,sal#148,comm#149,deptno#150], MetastoreRelation common, emp, Some(a)
+         +- ConvertToUnsafe
+            +- HiveTableScan [deptno#151,dname#152,loc#153], MetastoreRelation common, dept, Some(b)
+===========================================================
+SparkCore
+  入口：SparkContext
+  核心抽象：RDD
+SparkSQL
+  入口：SQLContext
+    SQLContext依赖SparkContext对象
+	SparkSQL中SQLContext对象分为两类：
+	  SQLContext：SparkSQL中提供DataFrame构建、DataFrame执行以及sql执行等操作的入口
+	  HiveContext: SQLContext的子类，专门用于和Hive的集成，eg：读取Hive元数据、使用hive的特定函数(窗口分析函数)
+	  备注：除非必须使用hive的相关内容，否则建议使用SQLContext对象
+  核心抽象：DataFrame
+
+=========================================
+Spark应用依赖第三方jar文件解决方案
+  备注：Spark应用在运行的时候，对于${SPARK_HOME}/lib文件夹中的jar文件，只会加载符合要求的jar文件: jar文件名称前缀为datanucleus-或者spark-assembly-；而且如果运行方式为spark on yarn driver cluster mode, 默认情况下，只会加载spark-assembly-前缀的jar文件到classpath中
+  -1. 使用参数--jars添加本地(运行spark-submit脚本机器上)的第三方jar文件，可以给定多个，使用逗号分隔(内部实际上使用spark.jars参数控制)
+    bin/spark-shell --jars /opt/cdh-5.3.6/hive/lib/mysql-connector-java-5.1.27-bin.jar,/opt/cdh-5.3.6/hive/lib/derby-10.10.1.1.jar  
+  -2. 使用参数--packages添加maven远程库中的第三方jar文件，可以给定多个，使用逗号分隔(内部实际上使用spark.jars参数控制)；执行原理是：首先检查本地是否有jar文件，如果有，直接添加；如果没有，那么从远程下载后再添加(本地的jar路径默认为~/.ivy2/jars文件夹)
+    bin/spark-shell --packages mysql:mysql-connector-java:5.1.27
+    bin/spark-shell --packages mysql:mysql-connector-java:5.1.27 --repositories http://maven.aliyun.com/nexus/content/groups/public/
+  -3. 使用SPARK_CLASSPATH环境变量给定jar文件的路径
+    内部通过参数spark.driver.extraClassPath和spark.executor.extraClassPath进行给定
+	注意：要求所有执行节点(driver和executor的执行节点)均存在对应的jar文件路径
+	cd /opt/cdh-5.3.6/spark
+	mkdir -p external_jars
+	cp /opt/cdh-5.3.6/hive/lib/mysql-connector-java-5.1.27-bin.jar ./external_jars/
+	cp /opt/cdh-5.3.6/hive/lib/derby-10.10.1.1.jar ./external_jars/
+	vim conf/spark-env.sh
+SPARK_CLASSPATH=/opt/cdh-5.3.6/spark/external_jars/*	
+   -4. 将第三方的jar文件打包到最终的jar文件中
+
+注意：
+  1. 当运行模式为spark on yarn driver cluster mode的时候，上述四种方式中，除了第四种外，其它的无效；最好的解决方案是将第三方的jar文件添加到yarn默认的classpath路径中，路径默认为: ${HADOOP_HOME}/share/hadoop/common/lib和${HADOOP_HOME}/share/hadoop/yarn/lib；如果你不知道的情况下，可以参数spark core wordcount application runing yarn driver cluster mode情况下的web ui查看可知默认路径是啥
+  2. SparkSQL应用集成Hive的情况下，如果运行环境为Spark on yarn Driver Cluster mode，那么必须将所有的${SPARK_HOME}/lib/datanucleus-*.jar添加到classpath中
+
+==============================================
+SparkSQL的ThriftServer服务
+  实质上ThriftServer服务是一个Spark的应用(集成了Hive而已)
+  底层其实就是Hive的HiveServer2服务
+    http://spark.apache.org/docs/1.6.1/sql-programming-guide.html#running-the-thrift-jdbcodbc-server
+	https://cwiki.apache.org/confluence/display/Hive/Setting+Up+HiveServer2
+  配置：
+    -1. 前提：已经完成SparkSQL和Hive的集成(启动相关服务或者添加相关的依赖包)
+	-2. 根据业务需要配置hiveserver2服务的相关参数
+	  hive.server2.thrift.port=10000
+	  hive.server2.thrift.bind.host=0.0.0.0
+    -3. 启动spark的thriftserver服务即可(参数和spark-submit脚本参数一样)
+	  sbin/start-thriftserver.sh
+
+SparkSQL的ThriftServer服务测试
+  备注：默认情况下，hive的hiveserver2服务是没有用户名和密码的，不会进行用户的验证的，所以可以随便给一个用户名和密码，但是如果hdfs开启了权限验证，那么要求给定的用户名是一个具有操作hdfs文件系统的用户
+  -1. 查看进程是否存在
+    jps -ml | grep HiveThriftServer2
+  -2. 通过web ui来查看，默认是4040页面
+  -3. 通过spark自带的beeline命令行查看
+bin/beeline 
+beeline> !help
+beeline> !connect jdbc:hive2://hadoop-senior01.ibeifeng.com:10000
+Connecting to jdbc:hive2://hadoop-senior01.ibeifeng.com:10000
+Enter username for jdbc:hive2://hadoop-senior01.ibeifeng.com:10000: gerry
+Enter password for jdbc:hive2://hadoop-senior01.ibeifeng.com:10000: ****
+17/11/19 15:43:38 INFO jdbc.Utils: Supplied authorities: hadoop-senior01.ibeifeng.com:10000
+17/11/19 15:43:38 INFO jdbc.Utils: Resolved authority: hadoop-senior01.ibeifeng.com:10000
+17/11/19 15:43:38 INFO jdbc.HiveConnection: Will try to open client transport with JDBC Uri: jdbc:hive2://hadoop-senior01.ibeifeng.com:10000
+Connected to: Spark SQL (version 1.6.1)
+Driver: Spark Project Core (version 1.6.1)
+Transaction isolation: TRANSACTION_REPEATABLE_READ
+0: jdbc:hive2://hadoop-senior01.ibeifeng.com:> 
+  -4. 通过JDBC来访问sparksql的thriftserver服务来验证服务是否正常
+     http://mvnrepository.com/artifact/org.spark-project.hive/hive-jdbc/0.13.1
+	 http://maven.aliyun.com/nexus/content/groups/public/org/apache/hive/hive-jdbc/0.13.1/
+<!-- hive jdbc的依赖必须放到SparkSQL/SparkHive的依赖后面，原因是：Spark默认的hive依赖版本是1.2.1，如果放在前面会出现覆盖情况，出现版本不兼容的问题 -->
+        <dependency>
+            <groupId>org.spark-project.hive</groupId>
+            <artifactId>hive-jdbc</artifactId>
+            <version>0.13.1</version>
+        </dependency>
+     作业：自己整理出来使用jdbc连接spark的thriftserver服务需要的最少的jar文件
+
+===========================================================
+SparkSQL读取HDFS上的JSON格式的文件
+  包括：数据的读取形成DataFrame、数据的处理、最终结果的输出
+  前提：要求json格式的数据必须是一行一个json对象，并且json对象不允许跨行
+  -1. 上传文件到HDFS
+    hdfs dfs -mkdir -p /beifeng/spark/sql/data
+	cd /opt/cdh-5.3.6/spark/examples/src/main/resources
+	hdfs dfs -put ./* /beifeng/spark/sql/data
+  -2. 编写SparkSQL程序
+val path = "/beifeng/spark/sql/data/people.json"
+val df = sqlContext.jsonFile(path)
+df.show
+// 将DataFrame注册成为临时表即可; 临时表的生效时间是：当前SQLContext对象中生效，当SQLContext结束关闭后，临时表会被删除
+// 临时表实质上只是在SQLContext对象内部(内存中)构建了一个表名称和DataFrame之间的映射关系
+// NOTE: 临时表中不允许存在符号"."，也就是临时表是没有database概念的
+df.registerTempTable("tmp_people")
+sqlContext.sql("select * from tmp_people where age is not null").show
+sqlContext.sql("select * from tmp_people where age is not null").registerTempTable("tmp_people2")
+sqlContext.sql("select name,age+1 as age from tmp_people2").show
+sqlContext.sql("select * from tmp_people where age is not null").saveAsTable("test001")
+sqlContext.sql("select age+1 as age,name from tmp_people2").insertInto("test001")
+
+sqlContext.sql("select name,age from json.`/beifeng/spark/sql/data/people.json` where age is not null").show
+
+sqlContext.sql("select * from parquet.`/beifeng/spark/sql/data/users.parquet`").show
+
+==================================================
+DataFrame
+  内部是以RDD为基础的分布式数据集，区别在于：DataFrame的数据是有schema信息；所以说DataFrame由两部分构成，分别为：
+    rdd: 数据，以Row按行存储的一个数据集，不可变，eg: df.rdd
+	schema: 数据对应的数据结构，也就是RDD中Row中数据对应的数据结构，eg: df.schema
+  创建方式：
+    val df = sqlContext.read.##
+	val df = sqlContext.##
+	val df = rdd.toDF()
+  SparkSQL操作
+    -1. HQL/SQL操作
+	  将DataFrame注册成为临时表，然后对临时表进行hql的开发
+	  df.registerTempTable("xxx")
+	  sqlContext.sql("xxx")
+	-2. DSL语法
+	  直接通过DataFrame的API进行业务的开发，比较类似RDD的API调用
+	-3. 将DataFrame转换为RDD后，然后在进行RDD的数据处理操作
+	  df.rdd
+	  df.map
+	  df.flatMap
+  SparkSQL结果输出
+    -1. 将DataFrame转换为RDD，然后对RDD的数据进行输出
+    -2. 直接调用DataFrame的foreachPartition API对数据进行输出
+    -3. 直接调用DataFrame的其它API进行输出
+      df.show 结果打印在driver的控制台
+      df.collect  结果以集合的形式的返回driver
+      df.write.##  结果输出
+
+SparkSQL应用程序处理流程
+  -1. 数据读取形成DataFrame
+  -2. DataFrame数据进行转换处理操作
+  -3. DataFrame结果数据输出
+
+DataFrame内部其实是一个逻辑计划
+  所有数据的执行/获取操作均是一个lazy的操作
+  也就是说只有当调用数据输出或者转换为RDD操作的时候，才会真的的触发hql的解析操作
+
+=================================
+DataFrame的read和write编程模型
+  http://spark-packages.org/
+  https://github.com/databricks
+  功能：通过SparkSQL内部定义的read和write数据读写接口完成数据的加载和结果的保存操作
+  加载数据:
+    val df = sqlContext.read.#
+  结果保存：
+    df.write.#
+
+Read：(DataFrameReader)
+  功能：读取外部数据源形成DataFrame
+  相关API：
+    format：给定数据的读取格式/给定采用如何方式读取数据 ==> 实际上是给定一个数据读取的class/object
+	  常用参数: json、parquet
+	  该参数的值可以是默认的缩写值，比如: json、parquet; 也可以是具体的DefaultSource类名称(包名+类名)或者DefaultSource类对应的包名称
+	  默认情况下，读取数据的格式为parquet
+	schema：给定数据的数据格式是啥，如果不给定，那么进行自动的推断
+	option：给定数据读取过程中的读取参数
+	load：加载数据形成DataFrame
+	jdbc：jdbc数据的读取，并形成DataFrame
+	json/parquet：读取hdfs上的json/parquet格式的文件数据形成DataFrame
+	table: 加载hive/当前SQLContext对象中的表(hive表也可以是临时表)
+
+write: DataFrameWriter
+  功能：将DataFrame的数据输出到外部的存储系统，比如:hdfs、hive表
+  相关API：
+    format：给定数据的写出格式/给定采用如何方式写出数据 ==> 实际上是给定一个数据写出的class/object
+	  常用参数: json、parquet
+	  该参数的值可以是默认的缩写值，比如: json、parquet; 也可以是具体的DefaultSource类名称(包名+类名)或者DefaultSource类对应的包名称
+	  默认情况下，写出数据的格式为parquet
+	mode：给定数据插入的方式，当数据插入的文件夹/表存在的时候，采用何种方式
+- `SaveMode.Overwrite`: overwrite the existing data.
+  覆盖，直接将原来的文件夹或者表删除，然后重新创建
+- `SaveMode.Append`: append the data.
+  追加，将内容直接添加到文件夹或者表的后面
+- `SaveMode.Ignore`: ignore the operation (i.e. no-op).
+  如果存在，那么不进行输出操作
+- `SaveMode.ErrorIfExists`: default option, throw an exception at runtime.
+  如果存在，那么报错，默认是该mode
+	option：给定数据读取过程中的读取参数
+	partitionBy：给定分区字段，要求输出格式支持分区
+	save：触发数据的输出操作
+	insertInto：将数据插入到一张已经存在的hive表中
+    saveAsTable：将数据插入到hive表中，如果表存在，根据mode的参数进行操作
+    jdbc：将数据输出到关系数据库中，如果表存在，根据mode的参数进行操作
+	json/parquet：将数据输出到HDFS文件系统，格式为json/parquet；如果文件夹存在，根据mode的参数进行操作
+	
+
+
+
+			

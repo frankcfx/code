@@ -1,0 +1,303 @@
+晚自习
+
+=========================================
+MapReduce
+  分布式的计算框架
+  input -> map task -> shuffle -> reduce task -> output
+  组成：
+    "五大执行"构成部件
+    Client => 提交job的机器
+    ApplicationMaster => Job调度的服务
+    Task => Map/Reduce Task
+  适合可以将大问题划分为小问题的情况， “分而治之”
+  shuffle
+    map task的数据怎么到reduce task的过程？？？
+       partition
+       sort
+       combiner
+         优化点
+         map端的聚合
+       compress
+         优化：只需要大数据的情况下
+       merge/sort
+       group
+  可能期望的回答是yarn的结构
+    NodeManager+RedouceManager
+  可以额外说一点Job的提交流程，见《MR任务流程图.pdf》
+
+
+Spark
+  基于内存的分布式计算框架
+    rdd#reduceByKey
+      stage0 ->  stage1 -> stage2
+      map 	-> reduce/map -> reduce
+  Spark应用的组成: 见SparkCore第一天的视频
+    Driver + Executors
+    Application
+      Jobs
+        Stage
+          Task
+
+====================================================
+2. 
+  原始数据： RDBMs， 数据格式是有schema的
+  如何将数据从RDBMs中移动到HDFS/Hive中？
+     Sqoop
+     SparkSQL
+        sqlContext.read.jdbc() 需要使用给定分区的api，参数特别那个
+        // 保存parquet形成的是一个文件夹，但是你直接直接使用文件夹中的*parquet*文件，该文件中就是具体的数据内容
+        sqlContext.read.jdbc(xxx).write.format("parquet").save("path")
+        sqlContext.read.jdbc(xxx).write.saveAsTable("hivetablename")
+  使用SparkSQL在移动数据的过程中，可以直接将ETL(数据清洗)的工作做掉
+  分析方式
+     Hive + MR + Spark
+       场景
+     数据从哪儿读取，怎么处理，处理结果保存的位置
+  可选：
+    针对数据格式不一致的回答方式
+      做一个元数据管理平台，保存需要移动的表以及表字段信息，然后同步数据的程序动态获取表以及表字段信息(表的位置信息、数据库类型、需要获取的字段信息、数据移动过来后保存的位置等)，形成一个SparkApplication，然后运行同步数据
+
+3. 
+  将数据分别缓存到不同机器上，然后加快数据访问速度
+  特性：高可用的、可扩展、易用性、分布式代码可执行
+  MapReduce Join
+    Map Join： 数据缓存
+    Reduce Join
+  HDFS缓存
+    http://hadoop.apache.org/docs/r2.5.2/hadoop-project-dist/hadoop-hdfs/CentralizedCacheManagement.html
+  Spark分布式内存管理系统： Tachyon
+
+4.
+   Java程序实现：多路归并排序(外排序)
+     将文件分割成为一个一个的小文件，然后将小文件读取内存进行排序，然后进行归并
+   MapReduce
+     借鉴快速排序的思想
+        快排思想：第一步找一个中间值(随机)pivot, 然后将所有小于pivot的数据放到左边， 将所有大于等于pivot的数据放到右边， 然后嵌套排序左侧内容和右侧的数据，最后将排序好的两部分直接连接就可以了
+     步骤：
+       1. 原始数据数据采样(MapReduce有专门的MR任务)
+       2. 对采样数据进行排序，选择出进行分割的pivot的值（多个pivot的值）
+       3. 根据pivot的数据进行自定义数据分区类设计
+       4. 编写MR程序读取原始数据，使用自定义的数据分区类，进行数据输出就可以了，内部使用MR程序自来的Sort排序机制来实现数据排序(reduce设置为多个)
+    假设：
+      reduce task的数量是4个，那么pivot选择的最终是三个(pivot1, pivot2, pivot3); (,pivot1)数据发送到0， [pivot1,pivot2)数据发送到1，[pivot2,pivot3)数据发送到2，[pivot3,)数据发送到3
+    数据采样：
+      采样：万分之一  0.01% 100M
+
+      pivot所有数据量不超过10M
+    MR任务的参数优化
+       mapred.child.java.opts
+
+7. 安装
+机器的数量，假设3台， hadoop01, hadoop02, hadoop03
+Zookeeper
+  xxx
+HDFS
+  基于HA集群
+  NameNode(NN/Active)  NN(Standby)   多个Standby NN，hadoop3.0支持
+  ZKFC	ZKFC
+  JournalNode JournalNode JournalNode ## 至少三台
+  DataNode 	DataNode DataNode
+
+Yarn
+  xxx
+
+HBase
+  Master  BackUpMasters
+  RegionServer RegionServer RegionServer
+
+9.
+ Yarn的调度器
+    yarn.resourcemanager.scheduler.class给定
+   FIFO： 先进先出
+   Capacity Scheduler： 容量调度/能力调度 --> Apache版本的默认方式
+      http://hadoop.apache.org/docs/r2.5.2/hadoop-yarn/hadoop-yarn-site/CapacityScheduler.html
+   Fair Scheduler： 公平调度 -> CDH版本默认方式
+      http://hadoop.apache.org/docs/r2.5.2/hadoop-yarn/hadoop-yarn-site/FairScheduler.html
+
+10.
+  -1. Java
+  -2. 支持其它语言
+     C/C++/Python/Shell
+     使用：
+     Hadoop Streaming/Pips
+
+12.
+  二次排序的实现
+    自定义分区器：partitioner
+    自定义分组器：group
+    自定义排序器：sort，如果该排序器不自定义，默认使用outputkey中的compare方法
+  二次排序的实现原理：
+    MapTask输出数据：分区器进行数据分区，然后使用排序器进行数据排序，最终形成对应reduce的一个个的文件
+    Reduce Task获取数据后，进行排序
+    进入reduce方法，在你程序进行value迭代的时候，进行group操作
+      partitioner -> sort -> shuffle -> sort -> group
+
+14. --> hadoop2.5.x
+  For the common case, when the replication factor is 3, HDFS’s placement policy is to put one replica on one node in the 本地机架(如果client是集群中的节点，那么就是client所在的节点；否则随机节点), another on a different node in the local rack(本地机架其他节点), and the last on a different node in a different rack(不同机架的不同节点). 
+  不同版本的选择方式是不一样的
+
+15. Hadoop框架
+  HDFS优化
+    参数的调整
+    Short-Circuit Local Reads： 本地数据读取
+  MapReduce
+    压缩
+    combiner
+    推测执行：小集群或者机器配置不高的集群一定要关闭
+    JVM重用
+      在小任务的情况下可以开启
+    指定task的内存大小
+
+18.
+  实质是一个TOP K程序
+   K稍微有点大，K条数据没法放到内存中
+
+   -1. 先计算各个url出现的次数
+   -2. 
+     (实现方式一)
+   以出现次数为key，url为value，进行二次排序
+     二次排序的要求是
+        所有到同一个reduce task任务中(reduce的数量是一个)，value的出现次序是安装key的大小降序排序的(降序)
+     reduce task的任务就是输出前100万的url
+        for (url : values) {
+          int currentUrlCount = key.count
+          if (totalCount + currentUrlCount <= 100万) {
+            for(currentUrlCount次) {
+              context.write(url, null)
+            }
+            totalCount += currentUrlCount;
+          } else {
+            // 最后几次
+            for (100万-totalCount 次) {
+              context.write(url, null)
+            }
+          }
+        }
+     (实现方式二)
+        以NullWritabl为key，<url,count>为value
+        reduct task作用类似于实现方式一：
+          for (value : values) {
+	          int currentUrlCount = value.count
+	          if (totalCount + currentUrlCount <= 100万) {
+	            for(currentUrlCount次) {
+	              context.write(value.url, null)
+	            }
+	            totalCount += currentUrlCount;
+	          } else {
+	            // 最后几次
+	            for (100万-totalCount 次) {
+	              context.write(value.url, null)
+	            }
+	          }
+	        }
+    扩展：如果是获取1万条url 怎么做??
+       如果url没有重复的怎么做， 获取1万条???
+          1个MapReduce是可以做成的
+            考虑一下内存
+            mapTask做插入排序
+            reduceTask一样的插入排序
+
+19. 数据倾斜
+  产生原因：maptask到reducetask的时候数据分布不均衡导致的(数据本身不均衡,有的数据多，有的数据少；partitioner分区器对数据的分区操作不均衡导致)
+  -1. 自定义分区
+  -2. 将一个mr拆分成为两个来执行(类似Spark中的两阶段聚合)
+  hive：将一个mr分割成为两个来执行的(由参数控制，参考hadoop项目最后一天的笔记)
+  mr：自定义分区
+
+22. 
+  参考Spark实现Top10的代码，可以自行翻译成为MapReduce的
+
+24.
+  -1. 算法功能
+    分类、聚类、回归
+    聚类：
+      k-means 场景
+      kNN
+    处理的都是一些数值型的数据
+类型
+  			男  女 未知
+zhangsan	1   0   0
+lili		0	1	0
+tom			0	0	1
+	-2. 数据收集、清洗、过滤、转换(处理数据，分析数据)
+	   集合的使用
+	   基本算法的使用: 排序算法等
+	-3. 调用现有算法框架提供的API，并给定算法参数
+	   算法选择
+	     先选历史悠久，最常用的算法；
+	   参数调整
+	     各个算法都进行对比分析，选择出来最优参数
+	   -----> 最终得到一个模型
+	-4. 模型验证
+
+25. 
+hadoop jar \
+xxxx.jar \
+args-01 args-02
+
+hadoop jar \
+--libjars xxx1.jar,xxx2.jar \
+xxxx.jar \
+args-01 args-02
+
+配置HADOOP_CLASSPATH
+
+27
+  两个阶段：MapTask -> 输出阶段； ReduceTask -> 输入阶段
+  不能避免
+  原因是后续的数据分组依赖数据的排序结果
+
+45、HDFS写文件流程
+  1. client -> NameNode
+  2. NN -> client: 返回写数据的节点(数据块写到那些节点上)
+  3. client -> first DataNode： 写数据同时把DN列表(复制节点位置)也携带过去
+  4. first DN -> second DN: 往第二个节点写数据
+  5. second DN -> third DN: 往第三个节点写数据
+  6. third DN -> second DN: 返回ack操作结果
+  7. second DN -> first DN: 返回ack操作结果
+  8. first DN -> client: 返回ack操作结果
+  9. client根据ack的返回值，进行操作
+   --1. 如果至少有一个节点写入数据成功，那么此次写数据成功。继续写下一条数据； 对于副本数没有达到要求的节点，后期由NN负责通知DN copy数据
+   --2. 如果没有数据写入成功，重试，重试还不可以的情况下抛出异常
+
+=======================================
+Hive 
+  实现not in怎么实现？
+    select a.* from a left join b on a.id = b.id where b.id is null
+    求a的值不在b里面的
+  元数据的管理
+    本地: 
+       hive.metastore.uris: 为空
+       另外一个参数: local
+    远程:
+       hive.metastore.uris: 给定多个url
+           thrift://hadoop-senior01.ibeifeng.com:9083,hadoop-xxx
+
+  排序
+    sortby: 局部reduce排序
+    order by：全局排序，只有一个reduce
+
+Sqoop
+  -1. -query "select * from xxx where date>=xxx and data < yyy"
+  -2. incremental
+
+  重复数据使用参数
+    update-key, key相同的其他值覆盖
+
+
+多线程
+  Thread
+    实现run函数
+  Runnable
+    实现run函数
+  Thread底层会调用自身的run方法，所以如果我们使用runnable实现，会调用两个run方法：Thread本身的和Runnable的run方法
+
+  并发
+    synchronize
+    lock
+
+  线程进程的区别
+    线程是进程中的一个运行单元
+
+
+
