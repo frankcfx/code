@@ -1,0 +1,88 @@
+curl -XPUT http://elasticsearch1:9200/myindex/mytype/1?pretty -d '{
+ "name":"xiao1",
+ "age":22,
+ "sex":"male",
+ "hobby":["Football", "Basketball", "Sing"]
+}
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/0?pretty -d '{
+ "name":"xiao1",
+ "age":22,
+ "sex":"male",
+ "city": "beijing",
+ "hobby":["Football", "Basketball", "Sing"]
+}'
+8
+9
+curl -XPUT http://elasticsearch1:9200/myindex/mytype/1?pretty -d '{
+ "name":"xiao2",
+ "age":22,
+ "sex":"male",
+ "city": "beijing",
+ "hobby":["Football", "Basketball", "Sing"]
+ }'
+
+
+curl  -XPUT http://elasticsearch1:9200/myindex/mytype/2?pretty -d '{
+ "name":"fish",
+ "age":23,
+ "city": "beijing",
+ "sex":"male"
+ }'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/3?pretty -d '{
+ "name":"zhou",
+ "age":25,
+ "sex":"male",
+ "city": "nanjing",
+ "hobby":"fish"
+}'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/4?pretty -d '{
+ "name":"ring",
+ "age":26,
+ "sex":"female",
+ "hobby":"dance"
+ }'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/5?pretty -d '{
+ "name":"zhou ring",
+ "age":26,
+ "city": "nanjing",
+ "sex":"female",
+ "hobby":"dance"
+ }'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/6?pretty ‐d '{
+ "name":"zhou kai",
+ "age":26,
+ "city": "shanghai",
+ "sex":"male",
+ "hobby":"dance"
+}'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/7?pretty ‐d '{
+ "name":"zhou kai",
+ "age":27,
+ "sex":"male",
+ "city": "shanghai",
+ "hobby":["dance"]
+}'
+
+curl -XPUT http://elasticsearch1:9200/myindex/mytype/8?pretty ‐d '{
+ "name":"zhou ring kai",
+ "age":27,
+ "sex":"male",
+ "city": "shanghai",
+ "hobby":"dance"
+ }'
+
+curl -XPUT  http://elasticsearch1:9200/myindex/mytype/9?pretty ‐d '{
+ "name":"ring zhou kai",
+ "age":27,
+ "city": "beijing",
+ "sex":"male",
+ "hobby":"dance"
+ }'
+ 
+curl -XGET http://elasticsearch1:9200/myindex/mytype/1?pretty

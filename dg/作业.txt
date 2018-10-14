@@ -1,0 +1,65 @@
+第一周
+下载如下软件并截图，如果已经有环境，截图即可。 
+1.操作系统：CentOS 6.6
+2.虚拟机环境：Vmware WorkStation
+3.java版本：JDK1.8
+4.数据库：mysql-5.6
+5.CDH5.7.0版本的hadoop、hive、spark等软件
+注： 
+hadoop、hive、spark可从cdh的官网下载，链接：http://archive.cloudera.com/cdh5/cdh/5/ 
+mysql采用rpm包安装 
+下载链接：https://cdn.mysql.com//Downloads/MySQL-5.6/MySQL-5.6.38-1.el6.x86_64.rpm-bundle.tar 
+
+第二周
+1.请对比描述Yarn Client和Yarn Cluster两种模式的差异
+2.使用IDEA工具运行一个spark的程序，截图
+
+第三周
+1.简述kafka的消息检索过程
+2.使用spark streaming读取kafka数据，将offset保存到zookeeper中，并截图
+
+第四周
+1.简述三种消息传递语义的区别和应用场景
+2.实现一个幂等exactly-once语义的例子
+
+第五周
+1.用自己的语言简述Hbase列族数量不能太多的原因？
+2.使用spark将数据保存到hbase，实现Exactly-once语义，截图
+
+第六周
+1.简述Elasticsearch需要做哪些方面的优化？
+2.使用Spark Streaming读取kafka的数据，存入到Elasticsearch，截图
+
+第七周
+画图或者用文字简述Flume分层架构的模型，并说明其优点
+
+第八周
+1.对比描述几种hdfs文件存储格式的区别
+2.使用日志的实际时间（时间字段）按日、小时分区，使用Spark整合Hive的动态分区、Spark的PartitionBy算子实现。选择其中之一即可，截图。 
+3.数据源为原始的HDFS文件，数据清洗如何实现exactly-once语义，如何保证清洗的任务重新调度数据不重复？（选做）
+
+第九周
+1.总结Spark Shuffle的优化的一些关键点
+2.总结解决小文件的一些思路
+3.分析如下spark任务提交脚本需要的资源
+spark-shell --master yarn \
+--master yarn-client \
+--num-executors 4 \
+--driver-memory 10g \
+--executor-memory 2g \
+--executor-cores 5 \
+--conf spark.yarn.executor.memoryOverhead=1220m \
+--conf spark.yarn.am.memory=900m \
+--conf spark.yarn.am.memoryOverhead=800m
+
+第十周
+1.简述spark作业使用rest方式调用的优点
+以下二选一：
+2.重复中文乱码的例子，截图
+3.安装livy，运行一个例子，截图
+
+第十一周
+1.关系型DB数据库（MySQL、Oracle等）与大数据集群网络不通，如何将数据从数据库读取出来或者将数据写入到数据库？ 
+2.简述什么场景下，需要对Spark Driver内存调优？
+3.简述Azkaban三个组件的作用
+4.运行Azkaban模板的例子（选做）
