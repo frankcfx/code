@@ -1,0 +1,12 @@
+<component name="libraryTable">
+  <library name="phoenix-4.13.2-cdh5.7.0-client">
+    <CLASSES>
+      <root url="jar://$USER_HOME$/phoenix-4.13.2-cdh5.7.0/phoenix-4.13.2-cdh5.7.0-client.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$USER_HOME$/phoenix-4.13.2-cdh5.7.0/phoenix-4.13.2-cdh5.7.0-client.jar!/" />
+      <root url="jar://$USER_HOME$/phoenix-4.13.2-cdh5.7.0/phoenix-4.13.2-cdh5.7.0-client.jar!/org/apache/phoenix/shaded" />
+    </SOURCES>
+  </library>
+</component>
