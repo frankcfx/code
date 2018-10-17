@@ -11,3 +11,8 @@ sqoop import --connect jdbc:mysql://localhost:3306/test --username root --passwo
 https://www.jianshu.com/p/a19486f5a0ea
 
 https://blog.csdn.net/YSC1123/article/details/78905073
+
+scala kafka consumer
+https://blog.csdn.net/u012965373/article/details/74548388
+https://www.cnblogs.com/AK47Sonic/p/7260577.html
+https://hk.saowen.com/a/63ba0bf52b73651f3d133e82829e4e817c03a9a0a24af42a3a5e74e3209483bf
